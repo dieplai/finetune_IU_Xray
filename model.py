@@ -42,7 +42,6 @@ class ImageEncoder(nn.Module):
             pretrained=pretrained,
             num_classes=0,
             global_pool='',
-            img_size=image_size,
         )
         
         self.feature_dim = self.model.num_features
@@ -53,12 +52,12 @@ class ImageEncoder(nn.Module):
         features = self.model.forward_features(x)
         global_feat = features.mean(dim=[2, 3])
         global_embed = self.global_proj(global_feat)
-        global_embed = F.normalize(global_embed, dim=-1)
+        global_embed = F.normalize(global_embed, dim=-1, eps=1e-5)
         
         local_embed = self.local_proj(features)
         B, C, H, W = local_embed.shape
         local_embed = local_embed.permute(0, 2, 3, 1).reshape(B, H * W, C)
-        local_embed = F.normalize(local_embed, dim=-1)
+        local_embed = F.normalize(local_embed, dim=-1, eps=1e-5)
         
         return global_embed, local_embed
 
@@ -89,7 +88,7 @@ class TextEncoder(nn.Module):
         
         cls_embed = outputs.last_hidden_state[:, 0, :]
         text_embed = self.projection(cls_embed)
-        text_embed = F.normalize(text_embed, dim=-1)
+        text_embed = F.normalize(text_embed, dim=-1, eps=1e-5)
         
         token_features = outputs.last_hidden_state
         return text_embed, token_features
@@ -124,7 +123,9 @@ class MedicalCLIP(nn.Module):
         return image_embed, text_embed, local_image, local_text
     
     def get_logits(self, image_embed, text_embed):
-        # Clamp temperature to prevent explosion
-        logit_scale = torch.clamp(self.logit_scale.exp(), max=100.0)
+        # Clamp the logit_scale parameter to prevent exp() overflow
+        # np.log(100.0) ≈ 4.605
+        self.logit_scale.data.clamp_(max=np.log(100.0))
+        logit_scale = self.logit_scale.exp()
         logits = logit_scale * image_embed @ text_embed.T
         return logits

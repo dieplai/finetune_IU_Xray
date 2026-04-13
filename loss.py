@@ -54,8 +54,8 @@ class SoftContrastiveLoss(nn.Module):
         hard_labels = torch.eye(B, N, device=device)
         
         # Disease similarity
-        dv_b = F.normalize(disease_vecs_batch + 1e-8, dim=-1)
-        dv_a = F.normalize(disease_vecs_all + 1e-8, dim=-1)
+        dv_b = F.normalize(disease_vecs_batch + 1e-8, dim=-1, eps=1e-5)
+        dv_a = F.normalize(disease_vecs_all + 1e-8, dim=-1, eps=1e-5)
         disease_sim = torch.mm(dv_b, dv_a.T)
         disease_sim = disease_sim / self.disease_temperature
         
@@ -86,13 +86,16 @@ class MultiGranularityLoss(nn.Module):
         if local_image is None or local_text is None:
             return torch.tensor(0.0, device='cuda')
         
-        local_image = F.normalize(local_image, dim=-1)
-        local_text = F.normalize(local_text, dim=-1)
+        local_image = F.normalize(local_image, dim=-1, eps=1e-5)
+        local_text = F.normalize(local_text, dim=-1, eps=1e-5)
         
         sim = torch.bmm(local_image, local_text.transpose(1, 2))
         mask = attention_mask.unsqueeze(1).float()
-        sim = sim * mask + (1 - mask) * (-1e9)
-        
+
+        # Safe masking: Instead of -1e9 which might cause underflow or NaN gradients in bfloat16,
+        # we set masked similarities to a very small finite value.
+        sim = sim * mask + (1.0 - mask) * -10000.0
+
         patch_best = sim.max(dim=-1)[0]
         loss = -patch_best.mean()
         

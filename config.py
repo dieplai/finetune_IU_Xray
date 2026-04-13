@@ -7,15 +7,14 @@ import os
 DATA_DIR = "/root/.cache/kagglehub/datasets/masrursabab/iu-chest-x-rays-cleaned/versions/1"
 CSV_PATH = os.path.join(DATA_DIR, "cleaned_dataset.csv")
 # Use 320 folder (closest to 384, will resize to 384 in transform)
-IMG_DIR = os.path.join(DATA_DIR, "resized_images", "320")
+IMG_DIR = os.path.join(DATA_DIR, "resized_images", "256")
 OUTPUT_DIR = "/root/IU_xray/outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Vision: SwinV2-CR-Small (49.7M params, 384x384)
-# A100 upgrade: swinv2_cr_base_384 (87.9M) or swinv2_cr_large_384 (196.7M)
-VISION_MODEL = "swinv2_cr_small_224"
+# Vision: ConvNeXt Small
+VISION_MODEL = "convnext_small.fb_in22k_ft_in1k"
 VISION_EMBED_DIM = 768
-VISION_IMAGE_SIZE = 384
+VISION_IMAGE_SIZE = 256
 
 # Text: PubMedBERT (110M params)
 TEXT_MODEL = "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
@@ -26,11 +25,11 @@ PROJECTION_DIM = 512
 PROJECTION_HIDDEN = 1024
 
 # Training - RTX 3090 (24GB)
-BATCH_SIZE = 32
-GRADIENT_ACCUMULATION = 2  # Effective batch = 64
+BATCH_SIZE = 16
+GRADIENT_ACCUMULATION = 2  # Effective batch = 32
 NUM_EPOCHS = 50
 WARMUP_RATIO = 0.1
-LR = 1e-4
+LR = 2e-5
 WEIGHT_DECAY = 1e-4
 MAX_GRAD_NORM = 1.0
 USE_AMP = True

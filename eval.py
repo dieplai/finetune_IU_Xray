@@ -21,8 +21,8 @@ def compute_retrieval_metrics(image_embeds, text_embeds, k_values=[1, 5, 10]):
     N = image_embeds.shape[0]
     
     # Compute similarity matrix
-    image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True)
-    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
+    image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True).clamp(min=1e-5)
+    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True).clamp(min=1e-5)
     sim_matrix = image_embeds @ text_embeds.T  # (N, N)
     
     results = {}

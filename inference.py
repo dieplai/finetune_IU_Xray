@@ -77,8 +77,8 @@ def retrieve_text_for_image(model, image_path, dataloader, device='cuda', top_k=
             all_image_ids.extend(batch['image_id'])
     
     all_text_embeds = torch.cat(all_text_embeds, dim=0)
-    all_text_embeds = all_text_embeds / all_text_embeds.norm(dim=-1, keepdim=True)
-    query_embed = query_embed / query_embed.norm(dim=-1, keepdim=True)
+    all_text_embeds = all_text_embeds / all_text_embeds.norm(dim=-1, keepdim=True).clamp(min=1e-5)
+    query_embed = query_embed / query_embed.norm(dim=-1, keepdim=True).clamp(min=1e-5)
     
     # Compute similarity
     sims = (query_embed @ all_text_embeds.T).squeeze(0)

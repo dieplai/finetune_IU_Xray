@@ -39,6 +39,8 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, loss_fn, scaler, 
     n_batches = 0
     
     for step, batch in enumerate(train_loader):
+        optimizer.zero_grad()
+        
         images = batch['image'].to(device, non_blocking=True)
         captions = batch['caption']
         disease_vecs = batch['disease_vec'].to(device, non_blocking=True)
@@ -48,7 +50,7 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, loss_fn, scaler, 
         attention_mask = tokenized['attention_mask'].to(device, non_blocking=True)
         
         if use_amp:
-            with autocast('cuda', enabled=True):
+            with autocast('cuda', enabled=True, dtype=torch.bfloat16):
                 image_embed, text_embed, local_image, local_text = model(
                     images, input_ids, attention_mask
                 )
@@ -69,19 +71,37 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, loss_fn, scaler, 
                 epoch=epoch, total_epochs=total_epochs
             )
         
+        loss_val = loss.item()
+        loss = loss / config.GRADIENT_ACCUMULATION
+        
+        if torch.isnan(loss):
+            print(f"Warning: NaN loss at epoch {epoch} step {step+1}. Skipping.")
+            optimizer.zero_grad()
+            continue
         if use_amp:
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+
+            if (step + 1) % config.GRADIENT_ACCUMULATION == 0 or (step + 1) == len(train_loader):
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                    print(f"Warning: Invalid gradients at epoch {epoch} step {step+1}. Skipping optimizer step.")
+                    optimizer.zero_grad()
+                else:
+                    optimizer.step()
+                    optimizer.zero_grad()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
-        
-        optimizer.zero_grad()
-        if scheduler is not None:
+
+            if (step + 1) % config.GRADIENT_ACCUMULATION == 0 or (step + 1) == len(train_loader):
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                    print(f"Warning: Invalid gradients at epoch {epoch} step {step+1}. Skipping optimizer step.")
+                    optimizer.zero_grad()
+                else:
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+        if scheduler is not None and ((step + 1) % config.GRADIENT_ACCUMULATION == 0 or (step + 1) == len(train_loader)):
             scheduler.step()
         
         total_loss += loss.item()
@@ -89,14 +109,13 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, loss_fn, scaler, 
         total_loss_local += loss_local.item()
         n_batches += 1
         
-        if (step + 1) % 10 == 0:
-            lr = optimizer.param_groups[0]['lr']
-            temp = model.logit_scale.exp().item()
-            print(f"  Epoch {epoch} [{step+1}/{len(train_loader)}] "
-                  f"Loss: {loss.item():.4f} "
-                  f"Global: {loss_global.item():.4f} "
-                  f"Local: {loss_local.item():.4f} "
-                  f"Temp: {temp:.3f} LR: {lr:.6f}")
+        lr = optimizer.param_groups[0]['lr']
+        temp = model.logit_scale.exp().item()
+        print(f"  Epoch {epoch} [{step+1}/{len(train_loader)}] "
+              f"Loss: {loss.item():.4f} "
+              f"Global: {loss_global.item():.4f} "
+              f"Local: {loss_local.item():.4f} "
+              f"Temp: {temp:.3f} LR: {lr:.6f}")
     
     avg_loss = total_loss / n_batches
     avg_global = total_loss_global / n_batches
