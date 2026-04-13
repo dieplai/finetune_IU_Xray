@@ -202,8 +202,8 @@ def main():
         local_weight=config.LOCAL_WEIGHT,
     )
     print(f"Using Curriculum Learning:")
-    print(f"  Phase 1 (epochs 0-9): Pure InfoNCE")
-    print(f"  Phase 2 (epochs 10+): Soft Contrastive + Local alignment")
+    print(f"  Phase 1 (epochs 0-14): Pure InfoNCE")
+    print(f"  Phase 2 (epochs 15+): Soft Contrastive + Local alignment")
     
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=config.WEIGHT_DECAY)
     
@@ -213,7 +213,7 @@ def main():
     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
     
-    use_amp = not args.no_amp
+    use_amp = config.USE_AMP and not args.no_amp
     scaler = GradScaler('cuda', enabled=use_amp)
     
     start_epoch = 0

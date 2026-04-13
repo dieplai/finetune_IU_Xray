@@ -105,10 +105,10 @@ class MultiGranularityLoss(nn.Module):
 class CombinedLoss(nn.Module):
     """
     Combined loss with curriculum learning:
-    Phase 1 (epochs 0-9): Standard InfoNCE only
-    Phase 2 (epochs 10+): Add soft contrastive + local alignment
+    Phase 1 (epochs 0-14): Standard InfoNCE only
+    Phase 2 (epochs 15+): Add soft contrastive + local alignment
     """
-    
+
     def __init__(self, alpha=0.5, disease_temperature=0.5, local_weight=0.3):
         super().__init__()
         self.info_nce = InfoNCELoss()
@@ -116,20 +116,19 @@ class CombinedLoss(nn.Module):
         self.local_loss = MultiGranularityLoss(local_weight)
         self.alpha = alpha
         self.local_weight = local_weight
-    
+
     def forward(self, logits, disease_vecs_batch, disease_vecs_all,
                 local_image=None, local_text=None, attention_mask=None,
                 epoch=0, total_epochs=50):
-        
+
         # Curriculum: start with pure InfoNCE, gradually add soft contrastive
-        if epoch < 10:
+        if epoch < 15:
             # Phase 1: Pure InfoNCE (stable)
             loss_global = self.info_nce(logits)
             loss_local = torch.tensor(0.0, device=logits.device)
         else:
             # Phase 2: Blend InfoNCE + Soft Contrastive
-            progress = min((epoch - 10) / 20, 1.0)  # Ramp up over 20 epochs
-            
+            progress = min((epoch - 15) / 20, 1.0)  # Ramp up over 20 epochs            
             loss_info = self.info_nce(logits)
             loss_soft = self.soft_contrastive(logits, disease_vecs_batch, disease_vecs_all)
             loss_global = (1 - progress) * loss_info + progress * loss_soft
