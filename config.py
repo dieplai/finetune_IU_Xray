@@ -4,10 +4,9 @@ RTX 3090 (24GB) -> later A100 (80GB)
 """
 import os
 
-DATA_DIR = "/root/.cache/kagglehub/datasets/masrursabab/iu-chest-x-rays-cleaned/versions/1"
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "cleaned_dataset.csv")
-# Use 320 folder (closest to 384, will resize to 384 in transform)
-IMG_DIR = os.path.join(DATA_DIR, "resized_images", "256")
+IMG_DIR = os.path.join(DATA_DIR, "images")
 OUTPUT_DIR = "/root/IU_xray/outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
