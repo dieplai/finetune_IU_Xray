@@ -12,6 +12,9 @@ best.pt
 # Datasets & Scripts
 data/
 archive/
+v8_dataset/
+*.zip
+_*.py
 
 # Logs & History
 v8_outputs/
