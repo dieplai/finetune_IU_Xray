@@ -1,8 +1,7 @@
-torch
-torchvision
-numpy
-pandas
-Pillow
-timm
-transformers
-kagglehub
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0
+pandas>=2.0.0
+numpy>=1.24.0
+Pillow>=9.0.0
+scikit-learn>=1.2.0

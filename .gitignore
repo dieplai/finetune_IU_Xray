@@ -3,30 +3,33 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# PyTorch models and output logs
-outputs/
-*.pth
+# ML Output & Checkpoints
 *.pt
-*.log
-training.log
+*.pth
+*.ckpt
+best.pt
 
-# C/C++ Crash dumps
-core.*
+# Datasets & Scripts
+data/
+archive/
 
-# Environments
+# Logs & History
+v8_outputs/
+train.log
+history.csv
+*.json
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Sensitive & Environment
 .env
 .venv
 env/
 venv/
-ENV/
-env.bak/
-venv.bak/
+.ssh_pass
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Ignore other projects
+LVTN_2026/
