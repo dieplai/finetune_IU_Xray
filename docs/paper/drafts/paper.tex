@@ -1,0 +1,1215 @@
+%% ============================================================
+%% Clustering-Guided Contrastive Learning for Clinically Aware
+%% Chest X-ray Image--Report Retrieval
+%% Compile: xelatex paper.tex  (or pdflatex with T5 + vntex)
+%% ============================================================
+\documentclass[12pt, a4paper]{article}
+
+% -------- Encoding / Font --------
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+% Babel: last language listed = main language
+\usepackage[english,vietnamese]{babel}
+
+% -------- Maths --------
+\usepackage{amsmath, amssymb, amsthm}
+
+% -------- Layout --------
+\usepackage[top=2.5cm, bottom=2.5cm, left=3cm, right=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{parskip}
+\setlength{\parindent}{1.2em}
+
+% -------- Tables & Figures --------
+\usepackage{booktabs, multirow, tabularx, makecell}
+\usepackage{graphicx}
+\usepackage{caption, subcaption}
+\usepackage{float}
+\usepackage{array}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}m{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}m{#1}}
+
+% -------- Algorithm --------
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% -------- Hyperref --------
+\usepackage[colorlinks=true, linkcolor=blue!70!black,
+            citecolor=green!50!black, urlcolor=blue]{hyperref}
+
+% -------- References --------
+\usepackage{natbib}
+\bibliographystyle{abbrvnat}
+\setcitestyle{authoryear, open={(}, close={)}}
+
+% -------- Misc --------
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{Học đối sánh có hướng dẫn cụm bệnh cho truy hồi ảnh--báo cáo X-quang ngực}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% -------- Custom commands --------
+\newcommand{\Rcal}{\mathcal{R}}
+\newcommand{\calL}{\mathcal{L}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+\newcommand{\etal}{\textit{et al.}}
+\newcommand{\R}[1]{R@{#1}}
+
+% =========================================================
+\begin{document}
+% =========================================================
+
+%% ---------------------------------------------------------
+%% TITLE
+%% ---------------------------------------------------------
+\begin{titlepage}
+  \centering
+  \vspace*{1.5cm}
+  {\Large\bfseries
+    Học Đối Sánh Có Hướng Dẫn Cụm Bệnh\\
+    Cho Truy Hồi Ảnh--Báo Cáo X-quang Ngực\\[0.6em]
+    \normalsize\normalfont\itshape
+    Clustering-Guided Contrastive Learning for\\
+    Clinically Aware Chest X-ray Image--Report Retrieval
+  \par}
+
+  \vspace{2cm}
+  {\large Diep Trung Nam}\\[0.3em]
+  {\normalsize Khoa Công nghệ Thông tin, Trường Đại học \ldots \\[0.2em]
+    \texttt{dieptrungnam123@gmail.com}}
+
+  \vspace{2cm}
+  {\normalsize \today}
+
+  \vspace{3cm}
+  \hrule
+  \vspace{0.5em}
+  \begin{abstract}
+    \noindent\textbf{Tóm tắt (Vietnamese Abstract).}\;
+    Truy hồi ảnh--báo cáo X-quang ngực theo hướng học đối sánh đa phương thức
+    (\textit{contrastive learning}) thường gặp vấn đề \textit{âm tính sai}
+    (\textit{false negative}): các ảnh và báo cáo của bệnh nhân khác nhau nhưng
+    cùng nhóm bệnh lý bị xử lý như các cặp không liên quan, gây ra áp lực gradient
+    sai lệch và làm suy giảm khả năng truy hồi theo ngữ nghĩa lâm sàng.
+    Bài báo này đề xuất khung học đối sánh có hướng dẫn cụm bệnh
+    (\textit{clustering-guided contrastive learning framework}) nhằm giảm thiểu
+    vấn đề trên. Mô hình kết hợp SwinV2-Base làm bộ mã hóa ảnh và
+    Bio\_ClinicalBERT làm bộ mã hóa báo cáo, ánh xạ cả hai về không gian nhúng
+    512 chiều dùng chung. Quá trình huấn luyện áp dụng ba giai đoạn: (1) học
+    khớp chính xác cặp ảnh--báo cáo bằng InfoNCE đa dương tính, (2) điều chỉnh
+    mục tiêu mềm theo độ tương đồng Jaccard có trọng số IDF theo nhóm bệnh lý,
+    và (3) kéo các mẫu không bình thường cùng nhóm bệnh lại gần nhau bằng hàm
+    mất mát đối sánh có giám sát lâm sàng với lịch curriculum. Trên bộ dữ liệu
+    IU-Xray với phân chia cấp độ bệnh nhân cố định, mô hình đạt
+    \textit{clinical-valid} mean R@1\,=\,59.86\%,
+    \textit{cluster} mean R@1\,=\,69.36\%, và
+    \textit{strict} mean R@1\,=\,3.85\% trên tập kiểm tra.
+    Trong 377 ca kiểm tra, 64 ca ảnh-sang-văn bản và 93 ca văn bản-sang-ảnh được
+    xác định là \textit{clinical rescue}: mô hình trả về kết quả top-1 khác bệnh nhân
+    nhưng đúng về nhóm bệnh lý, minh chứng cho hiệu quả của phương pháp đề xuất.
+
+    \medskip
+    \noindent\textbf{Từ khoá:} truy hồi ảnh-văn bản y khoa, học đối sánh,
+    âm tính sai, cụm bệnh, X-quang ngực, SwinV2, ClinicalBERT.
+  \end{abstract}
+  \vspace{0.5em}
+  \hrule
+
+  \vspace{1.5cm}
+  \hrule
+  \vspace{0.5em}
+  \begin{abstract}
+    \noindent\textbf{Abstract (English).}\;
+    Cross-modal contrastive learning for chest X-ray image--report retrieval
+    commonly suffers from the \emph{false-negative} problem: image--report
+    pairs from different patients sharing the same pathological findings are
+    treated as hard negatives, introducing incorrect gradient pressure and
+    degrading clinically meaningful retrieval.
+    We propose a \emph{clustering-guided contrastive learning framework} to
+    mitigate this issue. Our model pairs a SwinV2-Base image encoder with a
+    Bio\_ClinicalBERT text encoder, projecting both modalities into a shared
+    512-dimensional embedding space via deep MLP heads. Training proceeds
+    in three phases: (1) strict image--report alignment with multi-positive
+    InfoNCE, (2) soft-target blending using IDF-weighted Jaccard pathology
+    similarity, and (3) a clinical supervised contrastive loss with a
+    curriculum schedule that pulls same-disease, non-normal pairs together
+    without compromising exact retrieval.
+    On the IU-Xray dataset under a fixed patient-stratified split,
+    the proposed model (v8, 150 epochs, NVIDIA A100) achieves a
+    \emph{clinical-valid} mean R@1 of 59.86\%,
+    \emph{cluster} mean R@1 of 69.36\%, and
+    \emph{strict} mean R@1 of 3.85\% on the test set.
+    Qualitative analysis reveals 64 image-to-text and 93 text-to-image
+    \emph{clinical rescue} cases in the top-1, where the model retrieves
+    a clinically related result from a different patient, demonstrating
+    effective false-negative mitigation.
+
+    \medskip
+    \noindent\textbf{Keywords:} medical image--text retrieval, contrastive
+    learning, false negatives, pathology clustering, chest X-ray, SwinV2,
+    ClinicalBERT.
+  \end{abstract}
+  \vspace{0.5em}
+  \hrule
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+%% ---------------------------------------------------------
+%% 1. GIỚI THIỆU
+%% ---------------------------------------------------------
+\section{Giới Thiệu (Introduction)}
+\label{sec:intro}
+
+Truy hồi ảnh--báo cáo y khoa (\textit{medical image--text retrieval}) là bài
+toán liên kết ảnh chẩn đoán với báo cáo lâm sàng tương ứng trong không gian
+nhúng chung. Ứng dụng thực tế bao gồm hỗ trợ bác sĩ tìm ca tương đồng, tổng
+hợp báo cáo tự động và xây dựng hệ thống tư vấn lâm sàng~\citep{jing2018automatic}.
+
+Học đối sánh đa phương thức (\textit{multimodal contrastive learning}) theo phong
+cách CLIP~\citep{radford2021learning} đã trở thành nền tảng chủ đạo cho bài toán
+này. Các phương pháp như ConVIRT~\citep{zhang2022contrastive} và
+GLoRIA~\citep{huang2021gloria} huấn luyện mô hình sao cho các cặp ảnh--báo cáo
+\emph{cùng bệnh nhân} (\textit{positive pairs}) được đẩy lại gần nhau, trong khi
+các cặp \emph{khác bệnh nhân} (\textit{negative pairs}) bị đẩy xa.
+
+\textbf{Vấn đề âm tính sai (False Negatives).}  Trong y khoa, bệnh nhân khác
+nhau thường có cùng biểu hiện bệnh lý. Hình~\ref{fig:false_negative_motivation}
+minh họa tình huống này: ảnh X-quang và báo cáo của hai bệnh nhân độc lập nhưng
+cùng mắc \textit{Atelectasis} lại bị hàm mất mát đối sánh coi là cặp âm tính và
+phạt chúng ra xa nhau. Điều này tạo ra gradient sai lệch và làm hỏng khả năng truy
+hồi theo ngữ nghĩa lâm sàng của mô hình.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox{0.85\textwidth}{
+    \centering
+    \textbf{Minh họa vấn đề âm tính sai}\\[0.5em]
+    \small
+    \begin{tabular}{cc}
+      Bệnh nhân A: Atelectasis & Bệnh nhân B: Atelectasis \\
+      \textit{(Ảnh + Báo cáo A)} & \textit{(Ảnh + Báo cáo B)} \\[0.3em]
+      \multicolumn{2}{c}{$\xrightarrow{\text{InfoNCE chuẩn}}$ Coi là negative $\Rightarrow$ Đẩy ra xa} \\[0.3em]
+      \multicolumn{2}{c}{$\xrightarrow{\text{Phương pháp đề xuất}}$ Coi là soft positive $\Rightarrow$ Không phạt}
+    \end{tabular}
+  }}
+  \caption{Vấn đề âm tính sai trong học đối sánh y khoa. Hai bệnh nhân khác nhau
+    nhưng cùng nhóm bệnh lý bị InfoNCE chuẩn coi là negative. Phương pháp đề xuất
+    gán nhãn soft positive dựa trên mức độ tương đồng bệnh lý.}
+  \label{fig:false_negative_motivation}
+\end{figure}
+
+\textbf{Đóng góp chính của bài báo này:}
+\begin{enumerate}[label=(\roman*)]
+  \item Xây dựng pipeline truy hồi cấp độ study (\textit{study-level})
+    cho bộ dữ liệu IU-Xray, kết hợp tổng hợp đa view bằng
+    \textit{attention pooling} (frontal + lateral).
+  \item Thiết kế hàm mất mát cụm bệnh theo phân cấp
+    (\textit{hierarchical clustering loss}) dùng Jaccard có trọng số IDF
+    để tạo nhãn mềm dựa trên mức độ tương đồng bệnh lý.
+  \item Đề xuất hàm mất mát đối sánh có giám sát lâm sàng
+    (\textit{clinical supervised contrastive loss}) với lịch curriculum,
+    kéo các cặp cùng bệnh khác bệnh nhân lại gần nhau mà không làm suy
+    yếu truy hồi chính xác.
+  \item Xây dựng bộ chỉ số đánh giá ba cấp độ: \textit{strict},
+    \textit{cluster}, và \textit{clinical-valid}, trong đó
+    \textit{clinical-valid} R@K là chỉ số chính đo hiệu quả giảm thiểu
+    âm tính sai.
+\end{enumerate}
+
+Phần còn lại của bài báo được tổ chức như sau: Mục~\ref{sec:related} tổng hợp
+các công trình liên quan; Mục~\ref{sec:method} mô tả phương pháp đề xuất;
+Mục~\ref{sec:exp} trình bày thiết lập thực nghiệm; Mục~\ref{sec:results} báo
+cáo kết quả; Mục~\ref{sec:discussion} thảo luận; Mục~\ref{sec:conclusion} kết
+luận.
+
+%% ---------------------------------------------------------
+%% 2. CÔNG TRÌNH LIÊN QUAN
+%% ---------------------------------------------------------
+\section{Công Trình Liên Quan (Related Work)}
+\label{sec:related}
+
+\subsection{Học Đối Sánh Đa Phương Thức}
+
+CLIP~\citep{radford2021learning} khởi đầu xu hướng huấn luyện ảnh và văn bản
+trong không gian nhúng chung bằng hàm InfoNCE~\citep{oord2018representation} trên
+400 triệu cặp ảnh--chú thích web. Với dữ liệu y khoa, ConVIRT~\citep{zhang2022contrastive}
+là công trình tiên phong áp dụng học đối sánh cho ảnh X-quang và báo cáo lâm sàng.
+GLoRIA~\citep{huang2021gloria} mở rộng bằng cách thêm học cục bộ vùng chú ý
+(\textit{local attention}). BiomedCLIP~\citep{zhang2023biomedclip} huấn luyện
+trên 15 triệu cặp ảnh--văn bản sinh y học quy mô lớn từ PMC.
+
+\subsection{Vấn Đề Âm Tính Sai}
+
+Vấn đề âm tính sai đã được nghiên cứu trong học đối sánh tổng quát.
+\citet{khosla2020supervised} đề xuất \textit{Supervised Contrastive Loss}
+(SupCon) sử dụng nhãn lớp để xác định nhiều dương tính trong mỗi batch.
+\citet{chuang2020debiased} đề xuất ước lượng phân phối âm tính không thiên lệch.
+\citet{robinson2021contrastive} nghiên cứu khai thác âm tính khó (\textit{hard
+negative mining}) kết hợp tránh âm tính sai.
+
+Trong y khoa, vấn đề này đặc biệt nghiêm trọng do: (1) nhiều bệnh nhân chia sẻ
+cùng bệnh lý, (2) dữ liệu có xu hướng mất cân bằng nhãn nặng (\eg{} IU-Xray
+có 57.88\% ca bình thường), và (3) ngữ nghĩa bệnh lý phụ thuộc vào cả biểu hiện
+hình ảnh lẫn mô tả ngôn ngữ lâm sàng.
+
+\subsection{Bộ Mã Hóa Y Khoa}
+
+SwinV2~\citep{liu2022swin} mở rộng \textit{Swin Transformer} với kỹ thuật
+rescaling hậu lớp chuẩn hóa và bias tương đối liên tục (\textit{continuous
+relative position bias}), cho phép fine-tune từ độ phân giải thấp lên cao.
+Bio\_ClinicalBERT~\citep{alsentzer2019publicly} là mô hình ngôn ngữ BERT
+được tiền huấn luyện trên ghi chú bệnh viện MIMIC-III, phù hợp với đặc thù
+ngôn ngữ lâm sàng.
+
+\subsection{Truy Hồi Ảnh--Báo Cáo X-quang Ngực}
+
+Bộ dữ liệu IU-Xray~\citep{demner2016preparing} là bộ dữ liệu chuẩn
+(\textit{benchmark}) được sử dụng phổ biến nhất cho bài toán tổng hợp báo cáo
+và truy hồi X-quang ngực. Nhiều nghiên cứu về truy hồi trên IU-Xray dùng chỉ
+số strict R@K với ground-truth là cặp ảnh--báo cáo của cùng bệnh nhân, chưa
+xét đến truy hồi theo tương đồng lâm sàng giữa các bệnh nhân khác nhau.
+Bài báo này đề xuất chỉ số \textit{clinical-valid} R@K để lấp đầy khoảng
+trống này.
+
+%% ---------------------------------------------------------
+%% 3. PHƯƠNG PHÁP ĐỀ XUẤT
+%% ---------------------------------------------------------
+\section{Phương Pháp Đề Xuất (Proposed Method)}
+\label{sec:method}
+
+Hình~\ref{fig:architecture} minh họa tổng thể kiến trúc và luồng huấn luyện.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox{0.95\textwidth}{
+    \centering
+    \textbf{Kiến trúc tổng thể}\\[1em]
+    \small
+    \begin{tabular}{ccc}
+      \makecell{\textbf{Image Side}\\Frontal (384$\times$384)\\Lateral (384$\times$384)} &
+      $\xrightarrow{\text{SwinV2-Base}}$ &
+      \makecell{$\vect{v}_f \in \mathbb{R}^{1024}$\\$\vect{v}_l \in \mathbb{R}^{1024}$}
+    \end{tabular}
+    \vspace{0.5em}\\
+    $\downarrow$ \textit{Projection MLP + Attention Pooling}\\
+    $\vect{z}_I \in \mathbb{R}^{512}$\\[1em]
+    \begin{tabular}{ccc}
+      \makecell{\textbf{Text Side}\\Report (max 128 tokens)} &
+      $\xrightarrow{\text{Bio\_ClinicalBERT}}$ &
+      $\vect{u} \in \mathbb{R}^{768}$
+    \end{tabular}
+    \vspace{0.5em}\\
+    $\downarrow$ \textit{Projection MLP}\\
+    $\vect{z}_T \in \mathbb{R}^{512}$\\[1em]
+    \textbf{Similarity:} $s_{ij} = e^{\tau} \cdot \vect{z}_I^{(i)\top} \vect{z}_T^{(j)}$
+    \quad (Learnable $\tau$, $e^\tau \in [1, 100]$)\\[1em]
+    \textbf{Loss:} $\calL = \calL_\text{base} + w_c\,\calL_\text{clinical} + w_a\,\calL_\text{aux}$
+  }}
+  \caption{Kiến trúc tổng thể của mô hình đề xuất. Hai modality ảnh và văn bản
+    được chiếu về không gian nhúng 512 chiều và tính độ tương đồng cosine
+    thông qua nhiệt độ học được. Hàm mất mát kết hợp ba thành phần.}
+  \label{fig:architecture}
+\end{figure}
+
+\subsection{Biểu Diễn Dữ Liệu}
+\label{sec:data_rep}
+
+Mỗi mẫu dữ liệu trong IU-Xray tương ứng với một \textit{study} (lần khám) của
+một bệnh nhân, gồm:
+\begin{itemize}
+  \item \textbf{Ảnh:} tối đa một ảnh frontal và một ảnh lateral, kích thước
+    $384 \times 384$ pixel sau khi padding để giữ toàn bộ trường nhìn.
+  \item \textbf{Văn bản:} báo cáo sau xử lý, ghép từ hai trường \texttt{findings}
+    và \texttt{impression}.
+  \item \textbf{Nhãn bệnh lý:} vector $\vect{d} \in \{0,1\}^{12}$ biểu diễn
+    12 nhóm bệnh lý theo CheXpert~\citep{irvin2019chexpert}, trích xuất bằng
+    quy tắc \textit{keyword matching} xét phủ định (\textit{negation-aware}).
+    Vector này không bao gồm ``No Finding'' và gộp
+    ``Enlarged Cardiomediastinum'' vào ``Cardiomegaly'' theo phép max.
+\end{itemize}
+
+\textbf{Định nghĩa bình thường (Normal):}
+Sample được coi là \textit{bình thường} (\textit{normal}) khi
+$\sum_k d_k = 0$, tức không có nhãn bệnh lý nào bằng 1.
+
+\subsection{Kiến Trúc Mô Hình}
+\label{sec:model}
+
+\subsubsection{Bộ Mã Hóa Ảnh (Image Encoder)}
+
+Mô hình sử dụng \textbf{SwinV2-Base}~\citep{liu2022swin} phiên bản
+\texttt{microsoft/swinv2-base-patch4-window12to24-192to384-22kto1k-ft}, được
+tiền huấn luyện trên ImageNet-22K và fine-tune từ độ phân giải 192 lên 384.
+Đầu vào là ảnh $384 \times 384 \times 3$; đầu ra là \texttt{pooler\_output}
+có chiều $\mathbb{R}^{1024}$. Gradient checkpointing được bật để tiết kiệm
+VRAM.
+
+\subsubsection{Bộ Mã Hóa Văn Bản (Text Encoder)}
+
+Mô hình sử dụng \textbf{Bio\_ClinicalBERT}~\citep{alsentzer2019publicly}
+(\texttt{emilyalsentzer/Bio\_ClinicalBERT}), được tiền huấn luyện trên ghi chú
+bệnh viện MIMIC-III. Báo cáo được cắt tối đa 128 token; embedding đầu ra là
+token \texttt{[CLS]} từ lớp ẩn cuối, chiều $\mathbb{R}^{768}$.
+
+\subsubsection{Đầu Chiếu (Projection Head)}
+
+Cả hai modality đều đi qua MLP 2 lớp với cùng cấu trúc:
+\begin{equation}
+  \vect{z} = \frac{\text{MLP}(\vect{h})}{\norm{\text{MLP}(\vect{h})}_2},
+  \label{eq:proj}
+\end{equation}
+trong đó MLP được định nghĩa:
+\begin{equation}
+  \text{MLP}(\vect{h}) = \vect{W}_2 \cdot \text{Dropout}\bigl(
+    \text{GELU}(\text{BN}(\vect{W}_1 \vect{h} + \vect{b}_1))
+  \bigr) + \vect{b}_2,
+\end{equation}
+với $\vect{W}_1 \in \mathbb{R}^{1024 \times d_\text{in}}$,
+$\vect{W}_2 \in \mathbb{R}^{512 \times 1024}$,
+Dropout tỉ lệ 0.2, và BN là Batch Normalization.
+Đầu ra $\vect{z} \in \mathbb{R}^{512}$ được chuẩn hóa L2.
+
+Độ tương đồng giữa cặp image--text được tính bằng tích vô hướng có nhiệt độ:
+\begin{equation}
+  s_{ij} = e^{\tau} \cdot \vect{z}_I^{(i)\top} \vect{z}_T^{(j)},
+  \label{eq:sim}
+\end{equation}
+trong đó $\tau$ là tham số học được (\textit{logit\_scale}), được kẹp sao cho
+$e^{\tau} \in [1, 100]$.
+
+\subsubsection{Tổng Hợp Đa View (Multi-View Attention Pooling)}
+
+Mỗi view (frontal/lateral) được mã hóa riêng bởi SwinV2 và projection head.
+Sau đó, một \textit{view-type embedding} $\vect{e}_\text{type} \in \mathbb{R}^{512}$
+(4 loại: frontal, lateral, other, pad) được cộng vào embedding của view tương ứng.
+Embedding study-level được tính bằng \textit{attention pooling}:
+\begin{equation}
+  \alpha_k = \frac{\exp\bigl(a(\vect{z}_k + \vect{e}_k^\text{type})\bigr)}
+                  {\sum_{k'} \exp\bigl(a(\vect{z}_{k'} + \vect{e}_{k'}^\text{type})\bigr)},
+  \label{eq:attn_weight}
+\end{equation}
+\begin{equation}
+  \vect{z}_I = \sum_{k=1}^{K} \alpha_k \, \vect{z}_k,
+  \label{eq:study_emb}
+\end{equation}
+trong đó $a(\cdot) = \vect{w}_2^\top \text{GELU}(\vect{W}_1 \cdot)$ là mạng
+attention nhỏ với $\vect{W}_1 \in \mathbb{R}^{256 \times 512}$ và
+$\vect{w}_2 \in \mathbb{R}^{256}$; $K \leq 2$ là số view hợp lệ
+(bị che bởi \textit{view\_mask}). Thiết kế này cho phép mô hình tự học
+tầm quan trọng của từng view thay vì dùng hợp trung bình cứng.
+
+\subsubsection{Đầu Phụ Bệnh Lý (Auxiliary Pathology Heads)}
+
+Ngoài đầu chiếu chính, mô hình có bốn đầu phụ (MLP một lớp):
+\begin{itemize}
+  \item \texttt{img\_pathology\_head}: dự đoán 12 nhãn bệnh lý từ $\vect{z}_I$.
+  \item \texttt{img\_normal\_head}: dự đoán nhị phân bình thường/bất thường.
+  \item \texttt{txt\_pathology\_head} và \texttt{txt\_normal\_head}: tương tự từ $\vect{z}_T$.
+\end{itemize}
+Các đầu phụ ép embedding giữ thông tin bệnh lý, nhưng trọng số nhỏ
+($w_a = 0.02$) để không lấn át mục tiêu truy hồi.
+
+\subsection{Hàm Mất Mát Theo Phân Cấp Cụm Bệnh}
+\label{sec:loss}
+
+\subsubsection{Giai Đoạn 1: MultiPositive InfoNCE (Epoch 1--11)}
+
+Trước khi bật clustering, hàm mất mát chính là InfoNCE đa dương tính:
+\begin{equation}
+  \calL_\text{InfoNCE} = -\frac{1}{N}\sum_{i=1}^{N}
+    \log \frac{\exp(s_{ii})}
+              {\sum_{j=1}^{N} \exp(s_{ij})},
+  \label{eq:infonce}
+\end{equation}
+trong đó $s_{ij}$ theo công thức~\eqref{eq:sim} đã tích hợp nhiệt độ học được,
+nên không cần chia thêm. Hàm mất mát tính theo cả hai chiều i2t và t2i;
+ground-truth dương tính là cặp cùng \texttt{patient\_id}.
+
+\subsubsection{Giai Đoạn 2: Hierarchical Clustering Loss (Epoch 12+)}
+\label{sec:cluster_loss}
+
+Từ epoch thứ 12, ground-truth được điều chỉnh thành nhãn mềm
+(\textit{soft target}) kết hợp giữa khớp chính xác và tương đồng bệnh lý:
+\begin{equation}
+  t_{ij} = (1 - \alpha) \cdot \mathbb{1}[p_i = p_j]
+           + \alpha \cdot S^\text{IDF}_{ij},
+  \label{eq:soft_target}
+\end{equation}
+với $\alpha = 0.35$ và $S^\text{IDF}_{ij}$ là độ tương đồng Jaccard có trọng
+số IDF giữa hai vector bệnh lý $\vect{d}_i$ và $\vect{d}_j$:
+
+\begin{equation}
+  \boxed{
+  S^\text{IDF}(A, B) =
+    \frac{\displaystyle\sum_{k=1}^{12} w_k \cdot \min(A_k, B_k)}
+         {\displaystyle\sum_{k=1}^{12} w_k \cdot \max(A_k, B_k)},
+  }
+  \label{eq:jaccard_idf}
+\end{equation}
+trong đó trọng số IDF được tính:
+\begin{equation}
+  w_k = \frac{\log(1/f_k)}{\sum_{k'} \log(1/f_{k'})},
+  \label{eq:idf_weight}
+\end{equation}
+với $f_k$ là tần suất xuất hiện của bệnh $k$ trong tập huấn luyện.
+Thiết kế này ưu tiên bệnh hiếm gặp hơn: \eg{} Pneumothorax ($f = 2.03\%$) và
+Fracture ($f = 1.82\%$) có $w_k$ lớn hơn Cardiomegaly ($f = 9.00\%$).
+
+\textbf{Xử lý nhóm bình thường:}
+Khi $\sum_k d_k^{(i)} = 0$ và $\sum_k d_k^{(j)} = 0$ (cả hai đều bình thường),
+Jaccard không xác định được. Vì vậy, công thức~\eqref{eq:soft_target} thêm
+phần thưởng cố định:
+\begin{equation}
+  S^\text{IDF}_{ij} \leftarrow S^\text{IDF}_{ij} + 0.4 \cdot
+    \mathbb{1}[\text{normal}(i)] \cdot \mathbb{1}[\text{normal}(j)],
+  \label{eq:normal_bonus}
+\end{equation}
+giúp nhóm các ca bình thường lại gần nhau trong không gian nhúng.
+
+\subsubsection{Hàm Mất Mát Đối Sánh Có Giám Sát Lâm Sàng (Epoch 15+)}
+\label{sec:clinical_loss}
+
+Đây là đóng góp cốt lõi nhắm trực tiếp vào vấn đề âm tính sai:
+
+\textbf{Mặt nạ lâm sàng (Clinical mask):}
+\begin{equation}
+  M^\text{clin}_{ij} =
+    \underbrace{\mathbb{1}[\vect{d}_i \cdot \vect{d}_j > 0]}_{\text{có disease overlap}}
+    \cdot
+    \underbrace{\mathbb{1}[i \neq j]}_{\text{khác sample}}
+    \cdot
+    \underbrace{\mathbb{1}[\text{non-normal}(i)]}_{}
+    \cdot
+    \underbrace{\mathbb{1}[\text{non-normal}(j)]}_{}
+  \label{eq:clinical_mask}
+\end{equation}
+Mặt nạ này xác định các cặp bệnh nhân khác nhau, cùng có ít nhất một
+bệnh lý chung và đều không bình thường.
+
+\textbf{Hàm mất mát:}
+\begin{equation}
+  \calL_\text{clin} = -\frac{1}{|\mathcal{Q}|} \sum_{i \in \mathcal{Q}}
+    \frac{1}{|P_i|} \sum_{j \in P_i}
+    \log \frac{\exp(s_{ij})}{\sum_{k=1}^{N} \exp(s_{ik})},
+  \label{eq:clinical_loss}
+\end{equation}
+trong đó $\mathcal{Q} = \{i : |P_i| > 0\}$ là tập query bất thường có ít nhất
+một positive lâm sàng, và $P_i = \{j : M^\text{clin}_{ij} = 1\}$. Hàm mất mát
+được tính theo cả hai chiều image$\to$text và text$\to$image.
+
+\subsubsection{Hàm Mất Mát Phụ (Auxiliary Loss)}
+
+\begin{equation}
+  \calL_\text{aux} = \frac{1}{4}\bigl[
+    \text{BCE}(\hat{\vect{d}}_I, \vect{d}) + \text{BCE}(\hat{n}_I, n)
+    + \text{BCE}(\hat{\vect{d}}_T, \vect{d}) + \text{BCE}(\hat{n}_T, n)
+  \bigr]
+  + 0.25 \cdot \bigl[\text{MSE}(\sigma(\hat{\vect{d}}_I), \sigma(\hat{\vect{d}}_T))
+    + \text{MSE}(\sigma(\hat{n}_I), \sigma(\hat{n}_T))\bigr],
+  \label{eq:aux_loss}
+\end{equation}
+trong đó $\hat{\vect{d}}$ là dự đoán bệnh lý, $\hat{n}$ là dự đoán bình thường,
+và $\sigma(\cdot)$ là sigmoid. Thành phần MSE ép hai modality nhất quán về dự
+đoán bệnh lý.
+
+\textbf{Hàm mất mát tổng:}
+\begin{equation}
+  \calL = \calL_\text{base} + w_c(e) \cdot \calL_\text{clin} + w_a \cdot \calL_\text{aux},
+  \label{eq:total_loss}
+\end{equation}
+với $w_a = 0.02$ và $w_c(e)$ là lịch curriculum phụ thuộc epoch $e$.
+
+\subsection{Lịch Curriculum Lâm Sàng}
+\label{sec:curriculum}
+
+Thay vì bật $\calL_\text{clin}$ mạnh ngay từ đầu---có thể kéo mô hình về cụm
+quá rộng trước khi học được khớp chính xác---bài báo này áp dụng lịch học tăng
+dần rồi giảm:
+
+\begin{equation}
+  w_c(e) =
+  \begin{cases}
+    0 & e < 15 \\[2pt]
+    0.03 + 0.09 \cdot \dfrac{e - 15}{25 - 15} & 15 \leq e \leq 25 \\[6pt]
+    0.12 & 26 \leq e \leq 60 \\[2pt]
+    0.08 & 61 \leq e \leq 105 \\[2pt]
+    0.04 & 106 \leq e \leq 150
+  \end{cases}
+  \label{eq:curriculum}
+\end{equation}
+
+Bảng~\ref{tab:curriculum} tóm tắt ý nghĩa từng giai đoạn.
+
+\begin{table}[H]
+  \centering
+  \caption{Lịch curriculum lâm sàng và mục tiêu từng giai đoạn.}
+  \label{tab:curriculum}
+  \begin{tabular}{clcc}
+    \toprule
+    \textbf{Epoch} & \textbf{Mục tiêu chính} & \textbf{$w_c$} & \textbf{Pha huấn luyện} \\
+    \midrule
+    1--5   & Chỉ huấn luyện đầu chiếu (backbone đóng băng)   & 0.00 & Warm-up \\
+    6--11  & MultiPositive InfoNCE, mở toàn bộ backbone       & 0.00 & Strict alignment \\
+    12--14 & Bật clustering soft target                       & 0.00 & Clustering phase \\
+    15--25 & Tăng dần clinical loss                           & 0.03 $\to$ 0.12 & Clinical ramp \\
+    26--60 & Clinical supervision đỉnh                        & 0.12 & Clinical peak \\
+    61--105& Giảm dần clinical để hồi phục strict             & 0.08 & Clinical decay \\
+    106--150& Giai đoạn cuối, giảm thêm clinical              & 0.04 & Fine-tune strict \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Kết quả thực nghiệm (Mục~\ref{sec:results}) xác nhận tính hợp lý của lịch này:
+strict R@1 đạt đỉnh tại epoch 120 sau khi clinical weight giảm, trong khi
+clinical-valid đạt đỉnh tại epoch 90 khi clinical weight vẫn còn cao.
+
+%% ---------------------------------------------------------
+%% 4. THỰC NGHIỆM
+%% ---------------------------------------------------------
+\section{Thực Nghiệm (Experiments)}
+\label{sec:exp}
+
+\subsection{Bộ Dữ Liệu}
+\label{sec:dataset}
+
+Bộ dữ liệu \textbf{IU-Xray}~\citep{demner2016preparing} (Indiana University
+Chest X-ray Collection) gồm ảnh X-quang ngực chụp từ hệ thống PACS bệnh viện
+Indiana, kèm theo báo cáo lâm sàng tiếng Anh đã ẩn danh.
+
+\textbf{Tiền xử lý:}
+\begin{itemize}
+  \item Ảnh được chuyển sang RGB, padding thành hình vuông bằng nền đen, rồi
+    lưu ở kích thước $384 \times 384$ để tương thích với SwinV2-Base.
+    Padding được ưu tiên hơn crop để bảo toàn toàn bộ trường nhìn lâm sàng.
+  \item Văn bản: ghép \texttt{findings} + \texttt{impression}, chuẩn hóa
+    chữ thường, loại bỏ placeholder và thông tin nhân khẩu, lọc báo cáo
+    dưới 10 từ.
+  \item Nhãn bệnh lý: 14 nhãn CheXpert được tạo bằng quy tắc keyword matching
+    xét phủ định, sau đó rút gọn thành vector 12 chiều.
+\end{itemize}
+
+Bảng~\ref{tab:dataset} thống kê dữ liệu sau xử lý.
+
+\begin{table}[H]
+  \centering
+  \caption{Thống kê bộ dữ liệu IU-Xray sau tiền xử lý.}
+  \label{tab:dataset}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Thông số} & \multicolumn{2}{c}{\textbf{Giá trị}} \\
+    \midrule
+    Tổng số ảnh (PNG, 384$\times$384)    & \multicolumn{2}{r}{7,322} \\
+    Số bệnh nhân / study ID duy nhất     & \multicolumn{2}{r}{3,772} \\
+    Số báo cáo duy nhất                  & \multicolumn{2}{r}{3,018} \\
+    Số từ (min / trung bình / max)       & \multicolumn{2}{r}{10 / 37.27 / 223} \\
+    \midrule
+    Projection & Frontal & 3,738 \\
+               & Lateral & 3,584 \\
+    \midrule
+    \textbf{Phân chia dữ liệu (seed=42, patient-stratified)} & & \\
+    Huấn luyện (train) -- study-level   & \multicolumn{2}{r}{3,018} \\
+    Kiểm định (val) -- study-level      & \multicolumn{2}{r}{377}   \\
+    Kiểm tra (test) -- study-level      & \multicolumn{2}{r}{377}   \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Phân bố nhãn bệnh lý} được trình bày trong Bảng~\ref{tab:label_dist}.
+
+\begin{table}[H]
+  \centering
+  \caption{Phân bố 14 nhãn CheXpert trong tập dữ liệu IU-Xray (7,322 ảnh).}
+  \label{tab:label_dist}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Nhãn bệnh lý} & \textbf{Số lượng} & \textbf{Tỉ lệ (\%)} \\
+    \midrule
+    No Finding              & 4,238 & 57.88 \\
+    Cardiomegaly            &   659 &  9.00 \\
+    Lung Lesion             & 1,014 & 13.85 \\
+    Lung Opacity            &   942 & 12.87 \\
+    Atelectasis             &   732 & 10.00 \\
+    Consolidation           &   402 &  5.49 \\
+    Pleural Effusion        &   415 &  5.67 \\
+    Support Devices         &   224 &  3.06 \\
+    Edema                   &   185 &  2.53 \\
+    Pneumonia               &   164 &  2.24 \\
+    Pneumothorax            &   149 &  2.03 \\
+    Fracture                &   133 &  1.82 \\
+    Pleural Other           &    65 &  0.89 \\
+    Enlarged Cardiomediastinum &  17 &  0.23 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Cài Đặt Thực Nghiệm}
+\label{sec:setup}
+
+\textbf{Phần cứng:} NVIDIA A100 40 GB, Python 3.x, PyTorch, HuggingFace
+Transformers. Mixed precision (\texttt{torch.amp.autocast + GradScaler}).
+
+Các siêu tham số chính được tóm tắt trong Bảng~\ref{tab:hparams}.
+
+\begin{table}[H]
+  \centering
+  \caption{Siêu tham số huấn luyện của mô hình v8 (run chính).}
+  \label{tab:hparams}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Siêu tham số} & \textbf{Giá trị} \\
+    \midrule
+    Số epoch                     & 150 \\
+    Batch size                   & 32 \\
+    Gradient accumulation        & 4 \\
+    Effective batch size         & 128 \\
+    Epoch đóng băng backbone     & 5 \\
+    \midrule
+    Learning rate (image encoder)  & $1 \times 10^{-5}$ \\
+    Learning rate (text encoder)   & $1 \times 10^{-4}$ \\
+    Learning rate (projection head)& $2 \times 10^{-4}$ \\
+    Weight decay                   & 0.01 \\
+    Max gradient norm              & 1.0 \\
+    Optimizer                      & AdamW \\
+    \midrule
+    LR Scheduler (sau unfreeze) & Linear warmup (5\%) + CosineAnnealing \\
+    $\eta_\text{min}$           & $10^{-8}$ \\
+    \midrule
+    $\alpha$ (soft target blend)  & 0.35 \\
+    Temperature (cluster)         & 1.0 \\
+    $w_a$ (auxiliary weight)      & 0.02 \\
+    Seed                          & 42 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Chiến lược checkpoint:}
+Mô hình lưu ba loại checkpoint trong quá trình huấn luyện:
+(1) \texttt{best.pt}: epoch có \textit{strict} R@1 validation cao nhất;
+(2) \texttt{best\_balanced.pt}: epoch tối ưu hóa $\text{strict} + 0.1 \cdot
+\text{clinical-valid}$ khi strict $\geq 4.0$\%;
+(3) \texttt{best\_clinical\_valid.pt}: epoch có \textit{clinical-valid} R@1
+validation cao nhất khi strict $\geq 3.5$\%.
+Checkpoint chính được báo cáo là \texttt{best.pt} (epoch 120).
+
+\subsection{Chỉ Số Đánh Giá}
+\label{sec:metrics}
+
+Đánh giá ở cấp độ study: mỗi bệnh nhân là một query, embedding study được
+tính bằng attention pooling giống lúc huấn luyện.
+
+\textbf{(M1) Strict Retrieval:}
+Ground truth $G^\text{strict}_{ij} = \mathbb{1}[p_i = p_j]$, tức chỉ đúng
+bệnh nhân mới được tính là hit. Đây là chỉ số khó nhất, đo khớp chính xác.
+Báo cáo R@1, R@5, R@10, MRR theo cả hai chiều i2t và t2i.
+
+\textbf{(M2) Cluster Retrieval:}
+$G^\text{clus}_{ij} = \mathbb{1}[\vect{d}_i \cdot \vect{d}_j > 0]
++ \mathbb{1}[\text{normal}(i) \wedge \text{normal}(j)]$.
+Đo retrieval theo cụm bệnh rộng, bao gồm cả cặp bình thường--bình thường.
+
+\textbf{(M3) Clinical-Valid Retrieval (Chỉ số chính):}
+$G^\text{clin}_{ij} = \mathbb{1}[\vect{d}_i \cdot \vect{d}_j > 0]
+\wedge \mathbb{1}[\text{non-normal}(i)] \wedge \mathbb{1}[\text{non-normal}(j)]$.
+Chỉ tính metric trên các query \textit{non-normal} có ít nhất một positive lâm
+sàng trong tập kiểm tra ($n = 147$ query mỗi chiều).
+\textit{Đây là chỉ số đo trực tiếp mục tiêu giảm âm tính sai.}
+
+\textbf{(M4) Clinical-All Retrieval:} Tương tự M3 nhưng tính trên tất cả 377
+query (kể cả query không có positive lâm sàng). Dùng làm chỉ số phụ.
+
+\textbf{Phân tích định tính (Bucket Analysis):}
+Mỗi kết quả top-1 được phân vào một trong bốn nhóm:
+\begin{itemize}
+  \item \textit{Strict hit}: top-1 đúng bệnh nhân.
+  \item \textit{Clinical rescue}: top-1 khác bệnh nhân nhưng đúng clinical mask.
+  \item \textit{Cluster rescue}: top-1 đúng cluster mask nhưng không đủ chuẩn clinical.
+  \item \textit{Miss}: top-1 không thuộc nhóm nào ở trên.
+\end{itemize}
+
+%% ---------------------------------------------------------
+%% 5. KẾT QUẢ
+%% ---------------------------------------------------------
+\section{Kết Quả (Results)}
+\label{sec:results}
+
+\subsection{Kết Quả Định Lượng Trên Tập Kiểm Tra}
+
+Bảng~\ref{tab:main_results} trình bày kết quả đầy đủ của
+\textbf{v8 (epoch 120, best.pt)} trên tập kiểm tra 377 study.
+
+\begin{table}[H]
+  \centering
+  \caption{Kết quả truy hồi trên tập kiểm tra IU-Xray.
+    \textbf{i2t}: image-to-text; \textbf{t2i}: text-to-image; \textbf{Mean}: trung bình hai chiều.
+    Metric chính: \textit{clinical-valid} R@1 (in đậm).
+    Checkpoint: \texttt{best.pt}, epoch 120.}
+  \label{tab:main_results}
+  \renewcommand{\arraystretch}{1.15}
+  \begin{tabular}{l ccc ccc ccc}
+    \toprule
+    & \multicolumn{3}{c}{\textbf{Strict}} &
+      \multicolumn{3}{c}{\textbf{Cluster}} &
+      \multicolumn{3}{c}{\textbf{Clinical-Valid}} \\
+    \cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+    & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 \\
+    \midrule
+    i2t
+      & 3.45 & 10.08 & 17.77
+      & 68.17 & 79.58 & 85.15
+      & 49.66 & 60.54 & 69.39 \\
+    t2i
+      & 4.24 & 12.20 & 18.83
+      & 70.56 & 97.08 & 99.20
+      & 70.07 & 95.24 & 97.96 \\
+    \midrule
+    \textbf{Mean}
+      & 3.85 & 11.14 & 18.30
+      & 69.36 & 88.33 & 92.18
+      & \textbf{59.86} & \textbf{77.89} & \textbf{83.67} \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.4em}\\
+  \small \textit{MRR (strict) = 9.01\%; clinical-all mean R@1 = 23.34\%;
+  clinical-valid: 147/377 query mỗi chiều có positive.}
+\end{table}
+
+\textbf{Kết quả tập kiểm định (Validation, epoch 120):}
+\begin{itemize}
+  \item Strict R@1 (mean) tốt nhất: \textbf{4.91\%} tại epoch 120.
+  \item Clinical-valid R@1 (mean) tốt nhất: \textbf{52.11\%} tại epoch 90.
+  \item Cluster R@1 (mean) tốt nhất: \textbf{65.25\%} tại epoch 40.
+\end{itemize}
+
+\subsection{Phân Tích Định Tính: Bucket Analysis}
+
+Bảng~\ref{tab:bucket} phân tích top-1 của 377 study kiểm tra.
+
+\begin{table}[H]
+  \centering
+  \caption{Phân tích định tính top-1 trên 377 study kiểm tra. \textit{Clinical
+    rescue} là các ca mô hình trả về kết quả khác bệnh nhân nhưng đúng về
+    nhóm bệnh lý --- minh chứng trực tiếp cho hiệu quả giảm âm tính sai.}
+  \label{tab:bucket}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Chiều} &
+    \textbf{Strict Hit} &
+    \textbf{Clinical Rescue} &
+    \textbf{Cluster Rescue} &
+    \textbf{Miss} \\
+    \midrule
+    Image $\to$ Text & 13 (3.4\%)  & 64 (17.0\%) & 180 (47.7\%) & 120 (31.8\%) \\
+    Text $\to$ Image & 16 (4.2\%)  & 93 (24.7\%) & 157 (41.6\%) & 111 (29.4\%) \\
+    \midrule
+    \textbf{Tổng}    & \textbf{29} & \textbf{157} & \textbf{337} & \textbf{231} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Tổng cộng \textbf{157 ca clinical rescue} (64 i2t + 93 t2i) xác nhận mô hình
+học được tương đồng lâm sàng vượt qua ranh giới bệnh nhân. Trong 29 ca strict
+hit, top-1 đúng hoàn toàn bệnh nhân. 337 ca cluster rescue cho thấy mô hình
+nhóm tốt các ca có cùng cụm bệnh rộng. Chỉ 231/754 ca (30.6\%) bị miss hoàn
+toàn.
+
+\subsection{So Sánh Với Mô Hình Nền}
+\label{sec:comparison}
+
+Bảng~\ref{tab:comparison} so sánh v8 (mô hình đề xuất) với v7 trên cùng
+phân chia dữ liệu (seed=42, patient-stratified).
+
+\begin{table}[H]
+  \centering
+  \caption{So sánh v8 (đề xuất) với v7 (\textit{baseline}) trên tập kiểm tra.
+    Cả hai được đánh giá trên cùng phân chia dữ liệu cố định.}
+  \label{tab:comparison}
+  \begin{tabular}{l cccc}
+    \toprule
+    \textbf{Mô hình} &
+    \textbf{Strict Mean R@1} &
+    \textbf{Cluster Mean R@1} &
+    \textbf{Clinical-Valid Mean R@1} &
+    \textbf{MRR} \\
+    \midrule
+    V7 (best-balanced checkpoint)
+      & 3.32\% & 67.37\% & 59.86\% & -- \\
+    \textbf{V8 (best.pt, ep.~120)}
+      & \textbf{3.85\%} & \textbf{69.36\%} & \textbf{59.86\%} & \textbf{9.01\%} \\
+    \midrule
+    \textit{Cải thiện ($\Delta$)}
+      & +0.53 pp & +1.99 pp & 0.00 pp & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+V8 cải thiện strict mean R@1 thêm \textbf{+0.53 pp} và cluster mean R@1 thêm
+\textbf{+1.99 pp} so với v7, trong khi duy trì clinical-valid mean R@1 ở mức
+59.86\%. Kết quả này cho thấy lịch curriculum của v8 cân bằng tốt hơn giữa
+truy hồi chính xác và truy hồi lâm sàng so với cài đặt của v7.
+
+\subsection{Động Lực Huấn Luyện}
+
+Hình~\ref{fig:training_dynamics} minh họa diễn biến các chỉ số qua 150 epoch.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox{0.92\textwidth}{
+    \centering
+    \small
+    \begin{tabular}{r l}
+      \textbf{Epoch 1--5:}  & Chỉ huấn luyện đầu chiếu (backbone đóng băng). \\
+      \textbf{Epoch 6:}     & Mở backbone; strict R@1 bắt đầu tăng mạnh. \\
+      \textbf{Epoch 12:}    & Bật clustering loss; cluster R@1 tăng rõ rệt. \\
+      \textbf{Epoch 15:}    & Bắt đầu tăng $w_c$; clinical-valid tăng dần. \\
+      \textbf{Epoch 40:}    & Cluster R@1 đạt đỉnh validation (65.25\%). \\
+      \textbf{Epoch 60:}    & $w_c$ bắt đầu giảm; strict R@1 phục hồi. \\
+      \textbf{Epoch 90:}    & Clinical-valid R@1 đạt đỉnh validation (52.11\%). \\
+      \textbf{Epoch 120:}   & \textbf{Strict R@1 đạt đỉnh validation (4.91\%)} --- checkpoint best.pt. \\
+      \textbf{Epoch 150:}   & Epoch cuối; strict giảm nhẹ so với epoch 120.
+    \end{tabular}
+  }}
+  \caption{Diễn biến các chỉ số trên tập kiểm định qua 150 epoch.
+    (Hình ảnh thực tế từ \texttt{history.csv} nên được vẽ bằng matplotlib.)
+    Điểm đặc trưng: strict đạt đỉnh muộn (epoch 120) sau khi clinical decay,
+    xác nhận hiệu quả của lịch curriculum.}
+  \label{fig:training_dynamics}
+\end{figure}
+
+Điểm quan trọng cần nhấn mạnh: strict R@1 \textbf{phục hồi rõ ràng} sau khi
+$w_c$ bắt đầu giảm tại epoch 60, và đạt đỉnh tại epoch 120. Điều này xác nhận
+giả thuyết thiết kế: clinical decay giúp mô hình ``tinh chỉnh lại'' khả năng
+khớp chính xác sau giai đoạn học cụm bệnh.
+
+%% ---------------------------------------------------------
+%% 6. THẢO LUẬN
+%% ---------------------------------------------------------
+\section{Thảo Luận (Discussion)}
+\label{sec:discussion}
+
+\subsection{Ý Nghĩa Của Clinical-Valid R@1 Cao}
+
+Clinical-valid mean R@1 = 59.86\% trên 147 query (mỗi chiều) có ít nhất một
+positive lâm sàng cho thấy mô hình học được tương đồng bệnh lý vượt qua ranh
+giới bệnh nhân. Trong thực tế lâm sàng, khả năng truy hồi ca tương đồng bệnh
+lý (dù khác bệnh nhân) hữu ích hơn khớp chính xác---bác sĩ cần ca tham chiếu
+có biểu hiện giống, không nhất thiết cùng bệnh nhân.
+
+\subsection{Hạn Chế Của Strict R@1}
+
+Strict R@1 = 3.85\% thấp có thể giải thích bởi: (1) IU-Xray nhỏ (3,018 study
+huấn luyện) tương đối so với độ phức tạp của bài toán;
+(2) nhiều báo cáo IU-Xray có nội dung rất giống nhau, gây khó khăn cho việc
+phân biệt chính xác; (3) mô hình đang học đồng thời hai mục tiêu (strict và
+clinical), tạo đánh đổi (\textit{trade-off}).
+
+\subsection{Vai Trò Của Jaccard IDF và Healthy Cluster}
+
+Trọng số IDF đảm bảo rằng các bệnh hiếm gặp như Pneumothorax (2.03\%) và
+Fracture (1.82\%) đóng góp nhiều hơn vào độ tương đồng so với bệnh phổ biến
+như Cardiomegaly (9.00\%). Điều này phù hợp với thực tế lâm sàng: hai ảnh
+cùng có Pneumothorax hiếm gặp đáng được xem là tương đồng hơn hai ảnh cùng
+có Cardiomegaly phổ biến. Nhóm bình thường (57.88\% dữ liệu) được xử lý
+riêng qua phần thưởng 0.4, tránh trường hợp vector zero làm Jaccard không
+xác định được.
+
+\subsection{Curriculum Vs. Fixed Clinical Weight}
+
+Lịch curriculum (tăng rồi giảm $w_c$) được thiết kế để giải quyết bài toán
+cân bằng: nếu $w_c$ cố định cao, mô hình bị kéo quá mạnh về cụm rộng và
+không học được khớp chính xác; nếu $w_c$ cố định thấp, lợi ích từ clinical
+supervision không đủ. Kết quả epoch 120 (best strict) sau giai đoạn
+decay xác nhận hiệu quả của thiết kế này.
+
+\subsection{Các Thành Phần Không Bật Trong V8}
+
+Để đảm bảo tính minh bạch khoa học, cần ghi rõ: các thành phần
+\textit{DualPrototypeBank}, \textit{IntraClusterRankingLoss}, và
+\textit{Hard Negative Mining} có trong codebase nhưng bị vô hiệu hóa trong
+run v8 chính (\texttt{proto\_start=999}, \texttt{rank\_start=999},
+\texttt{mine\_start=999}). Kết quả báo cáo \textbf{không đến từ} các thành
+phần này. Chúng là hướng mở rộng cho công việc tương lai.
+
+\subsection{Hạn Chế}
+
+\begin{enumerate}
+  \item \textbf{Quy mô dữ liệu:} IU-Xray chỉ có $\sim$3,000 study huấn
+    luyện---nhỏ so với các hệ thống CLIP y khoa hiện đại dùng hàng triệu cặp.
+  \item \textbf{Nhãn bệnh lý yếu:} Nhãn được tạo bằng keyword matching, không
+    phải annotation của bác sĩ. Một số nhãn có thể sai do xử lý phủ định đơn
+    giản.
+  \item \textbf{Không có baseline từ paper khác:} Chưa so sánh với ConVIRT,
+    GLoRIA, BiomedCLIP trên cùng phân chia dữ liệu, do không có cài đặt mã
+    nguồn mở phù hợp.
+  \item \textbf{Chỉ đánh giá trên IU-Xray:} Khả năng tổng quát hóa sang
+    MIMIC-CXR hay các bộ dữ liệu X-quang khác chưa được kiểm chứng.
+  \item \textbf{Cluster metric bị ảnh hưởng bởi nhóm bình thường:} Cluster
+    R@1 cao một phần do nhóm normal lớn (57.88\%) tạo nhiều true positive
+    dễ.
+\end{enumerate}
+
+%% ---------------------------------------------------------
+%% 7. KẾT LUẬN
+%% ---------------------------------------------------------
+\section{Kết Luận (Conclusion)}
+\label{sec:conclusion}
+
+Bài báo đề xuất \textbf{khung học đối sánh có hướng dẫn cụm bệnh}
+(\textit{clustering-guided contrastive learning framework}) cho bài toán truy
+hồi ảnh--báo cáo X-quang ngực, với mục tiêu giảm thiểu vấn đề âm tính sai
+trong học đối sánh y khoa. Mô hình kết hợp SwinV2-Base và Bio\_ClinicalBERT,
+tổng hợp đa view bằng attention pooling, và huấn luyện theo ba giai đoạn với
+lịch curriculum lâm sàng.
+
+Trên IU-Xray với phân chia patient-stratified cố định (seed=42):
+\begin{itemize}
+  \item \textit{Clinical-valid} mean R@1 = \textbf{59.86\%}
+    (chỉ số chính, 147 query/chiều).
+  \item \textit{Cluster} mean R@1 = \textbf{69.36\%}.
+  \item \textit{Strict} mean R@1 = \textbf{3.85\%}; MRR = 9.01\%.
+  \item \textbf{157 ca clinical rescue} trong top-1 (64 i2t + 93 t2i)
+    từ 377 study kiểm tra.
+\end{itemize}
+
+Kết quả cho thấy phương pháp đề xuất học được tương đồng lâm sàng hiệu quả,
+phù hợp với mục tiêu giảm âm tính sai. Strict retrieval còn là hạn chế cần
+tiếp tục cải thiện, đặc biệt bằng cách thêm dữ liệu lớn hơn hoặc ablation
+có hệ thống hơn. Hướng nghiên cứu tương lai bao gồm: (1) ablation loại từng
+thành phần (IDF Jaccard, healthy cluster, curriculum schedule), (2) tích hợp
+hard negative mining, (3) đánh giá trên MIMIC-CXR quy mô lớn hơn, và
+(4) so sánh với baseline đã published trên cùng phân chia dữ liệu.
+
+%% ---------------------------------------------------------
+%% ACKNOWLEDGEMENTS
+%% ---------------------------------------------------------
+\section*{Lời Cảm Ơn}
+
+Tác giả cảm ơn giáo viên hướng dẫn và các thành viên nhóm nghiên cứu đã có
+những góp ý quý báu. Thực nghiệm được thực hiện trên NVIDIA A100 thông qua
+Google Colaboratory và nền tảng Kaggle.
+
+%% ---------------------------------------------------------
+%% REFERENCES
+%% ---------------------------------------------------------
+\begin{thebibliography}{99}
+
+\bibitem[Alsentzer et~al.(2019)]{alsentzer2019publicly}
+Alsentzer, E., Murphy, J.~R., Boag, W., Weng, W.-H., Jin, D., Naumann, T., and
+  McDermott, M. (2019).
+\newblock Publicly available clinical {BERT} embeddings.
+\newblock In \textit{Proceedings of the 2nd Clinical Natural Language
+  Processing Workshop}, pp.~72--78. Association for Computational Linguistics.
+
+\bibitem[Chuang et~al.(2020)]{chuang2020debiased}
+Chuang, C.-Y., Robinson, J., Lin, Y.-C., Torralba, A., and Jegelka, S. (2020).
+\newblock Debiased contrastive learning.
+\newblock In \textit{Advances in Neural Information Processing Systems
+  (NeurIPS)}, Vol.~33, pp.~8765--8775.
+
+\bibitem[Demner-Fushman et~al.(2016)]{demner2016preparing}
+Demner-Fushman, D., Kohli, M.~D., Rosenman, M.~B., Shooshan, S.~E., Rodriguez,
+  L., Antani, S., Thoma, G.~R., and McDonald, C.~J. (2016).
+\newblock Preparing a collection of radiology examinations for distribution and
+  retrieval.
+\newblock \textit{Journal of the American Medical Informatics Association
+  (JAMIA)}, 23(2):304--310.
+
+\bibitem[Huang et~al.(2021)]{huang2021gloria}
+Huang, S.-C., Shen, L., Lungren, M.~P., and Yeung, S. (2021).
+\newblock {GloRIA}: A multimodal global-local representation learning framework
+  for label-efficient medical image recognition.
+\newblock In \textit{Proceedings of the IEEE/CVF International Conference on
+  Computer Vision (ICCV)}, pp.~3942--3951.
+
+\bibitem[Irvin et~al.(2019)]{irvin2019chexpert}
+Irvin, J., Rajpurkar, P., Ko, M., Yu, Y., Ciurea-Ilcus, S., Chute, C.,
+  Marklund, H., Haghgoo, B., Ball, R., Shpanskaya, K., et~al. (2019).
+\newblock {CheXpert}: A large chest radiograph dataset with uncertainty labels
+  and expert comparison.
+\newblock In \textit{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, Vol.~33, pp.~590--597.
+
+\bibitem[Jing et~al.(2018)]{jing2018automatic}
+Jing, B., Xie, P., and Xing, E. (2018).
+\newblock On the automatic generation of medical imaging reports.
+\newblock In \textit{Proceedings of the 56th Annual Meeting of the Association
+  for Computational Linguistics (ACL)}, pp.~2577--2586.
+
+\bibitem[Khosla et~al.(2020)]{khosla2020supervised}
+Khosla, P., Tian, Y., Wang, X., Liu, C., Isola, P., Krishnamurthy, A., and
+  Tian, Y. (2020).
+\newblock Supervised contrastive learning.
+\newblock In \textit{Advances in Neural Information Processing Systems
+  (NeurIPS)}, Vol.~33, pp.~18661--18673.
+
+\bibitem[Liu et~al.(2022)]{liu2022swin}
+Liu, Z., Hu, H., Lin, Y., Yao, Z., Xie, Z., Wei, Y., Ning, J., Cao, Y., Zhang,
+  Z., Dong, L., et~al. (2022).
+\newblock Swin transformer {V2}: Scaling up capacity and resolution.
+\newblock In \textit{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition (CVPR)}, pp.~12009--12019.
+
+\bibitem[Oord et~al.(2018)]{oord2018representation}
+Oord, A. v.~d., Li, Y., and Vinyals, O. (2018).
+\newblock Representation learning with contrastive predictive coding.
+\newblock \textit{arXiv preprint arXiv:1807.03748}.
+
+\bibitem[Radford et~al.(2021)]{radford2021learning}
+Radford, A., Kim, J.~W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S.,
+  Sastry, G., Askell, A., Mishkin, P., Clark, J., et~al. (2021).
+\newblock Learning transferable visual models from natural language supervision.
+\newblock In \textit{Proceedings of the International Conference on Machine
+  Learning (ICML)}, pp.~8748--8763.
+
+\bibitem[Robinson et~al.(2021)]{robinson2021contrastive}
+Robinson, J., Chuang, C.-Y., Sra, S., and Jegelka, S. (2021).
+\newblock Contrastive learning with hard negative samples.
+\newblock In \textit{International Conference on Learning Representations
+  (ICLR)}.
+
+\bibitem[Zhang et~al.(2022)]{zhang2022contrastive}
+Zhang, Y., Jiang, H., Miura, Y., Manning, C.~D., and Langlotz, C.~P. (2022).
+\newblock Contrastive learning of medical visual representations from paired
+  images and text.
+\newblock In \textit{Machine Learning for Healthcare Conference (MLHC)},
+  pp.~2--25.
+
+\bibitem[Zhang et~al.(2023)]{zhang2023biomedclip}
+Zhang, S., Xu, Y., Usuyama, N., Bagga, J.~K., Tinn, R., Preston, S.,
+  Rao, R., Wei, M., Valluri, N., Wong, C., et~al. (2023).
+\newblock Large-scale domain-specific pretraining for biomedical
+  vision--language processing.
+\newblock \textit{arXiv preprint arXiv:2303.00915}.
+
+\end{thebibliography}
+
+%% ---------------------------------------------------------
+%% PHỤ LỤC
+%% ---------------------------------------------------------
+\appendix
+
+\section{Cấu Hình Đầy Đủ Run V8}
+\label{app:config}
+
+\begin{table}[H]
+  \centering
+  \caption{Toàn bộ cấu hình siêu tham số của run v8 chính
+    (\texttt{v8\_curriculum\_a100\_150ep\_seed42\_bs32\_v1}).}
+  \label{tab:full_config}
+  \small
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Tham số} & \textbf{Giá trị} \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Cơ bản}} \\
+    epochs & 150 \\
+    batch\_size & 32 \\
+    grad\_accum & 4 \\
+    effective\_batch & 128 \\
+    freeze\_ep & 5 \\
+    eval\_every & 5 \\
+    seed & 42 \\
+    num\_workers & 4 \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Learning rate}} \\
+    lr\_head (projection head) & 2e-4 \\
+    lr\_enc (image encoder) & 1e-5 \\
+    lr\_text (text encoder) & 1e-4 \\
+    weight\_decay & 0.01 \\
+    max\_grad\_norm & 1.0 \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Clustering}} \\
+    cluster\_start & 12 \\
+    CLUSTER\_ALPHA & 0.35 \\
+    proto\_start & 999 (vô hiệu hóa) \\
+    rank\_start & 999 (vô hiệu hóa) \\
+    mine\_start & 999 (vô hiệu hóa) \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Clinical curriculum}} \\
+    clinical\_start & 15 \\
+    clinical\_ramp\_start\_weight & 0.03 \\
+    clinical\_peak\_weight & 0.12 \\
+    clinical\_ramp\_end & 25 \\
+    clinical\_hold\_end & 60 \\
+    clinical\_mid\_weight & 0.08 \\
+    clinical\_decay\_end & 105 \\
+    clinical\_final\_weight & 0.04 \\
+    clinical\_best\_min\_strict & 3.5 \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Trọng số loss}} \\
+    aux\_weight & 0.02 \\
+    rank\_weight & 0.0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Phân Bố Trọng Số IDF Theo Nhóm Bệnh}
+\label{app:idf}
+
+Bảng~\ref{tab:idf_weights} tính trọng số IDF theo công thức~\eqref{eq:idf_weight}
+từ tần suất trong Bảng~\ref{tab:label_dist} (bỏ ``No Finding'' và gộp
+``Enlarged Cardiomediastinum'' vào ``Cardiomegaly'').
+
+\begin{table}[H]
+  \centering
+  \caption{Trọng số IDF tương đối của 12 nhóm bệnh trong vector bệnh lý.
+    Bệnh hiếm gặp (Pneumothorax, Fracture, Pleural Other) có trọng số cao hơn
+    bệnh phổ biến (Cardiomegaly, Lung Lesion).}
+  \label{tab:idf_weights}
+  \begin{tabular}{lrrl}
+    \toprule
+    \textbf{Nhóm bệnh} & \textbf{Tần suất (\%)} & \textbf{Trọng số IDF (tương đối)} & \\
+    \midrule
+    Pleural Other           & 0.89 & Cao nhất  & $\bullet\bullet\bullet\bullet\bullet$ \\
+    Fracture                & 1.82 & Rất cao   & $\bullet\bullet\bullet\bullet$ \\
+    Pneumothorax            & 2.03 & Rất cao   & $\bullet\bullet\bullet\bullet$ \\
+    Pneumonia               & 2.24 & Cao       & $\bullet\bullet\bullet$ \\
+    Edema                   & 2.53 & Cao       & $\bullet\bullet\bullet$ \\
+    Support Devices         & 3.06 & Vừa       & $\bullet\bullet$ \\
+    Consolidation           & 5.49 & Vừa       & $\bullet\bullet$ \\
+    Pleural Effusion        & 5.67 & Vừa       & $\bullet\bullet$ \\
+    Cardiomegaly            & 9.00 & Thấp      & $\bullet$ \\
+    Atelectasis             & 10.00 & Thấp     & $\bullet$ \\
+    Lung Opacity            & 12.87 & Thấp     & $\bullet$ \\
+    Lung Lesion             & 13.85 & Thấp nhất & $\cdot$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Bộ Chỉ Số Đầy Đủ Tất Cả Checkpoint}
+\label{app:all_checkpoints}
+
+\begin{table}[H]
+  \centering
+  \caption{So sánh ba loại checkpoint của run v8 trên tập kiểm tra.}
+  \label{tab:ckpt_compare}
+  \begin{tabular}{l ccc c}
+    \toprule
+    \textbf{Checkpoint} & \textbf{Epoch} &
+    \textbf{Strict Mean R@1} &
+    \textbf{Cluster Mean R@1} &
+    \textbf{Clinical-Valid Mean R@1} \\
+    \midrule
+    \texttt{best.pt}               & 120 & \textbf{3.85\%} & \textbf{69.36\%} & 59.86\% \\
+    \texttt{best\_balanced.pt}     & 120 & 3.85\% & 69.36\% & 59.86\% \\
+    \texttt{best\_clinical\_valid.pt} & 90 & 2.39\% & 65.78\% & 59.52\% \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.3em}\\
+  \small \textit{best.pt và best\_balanced.pt trùng kết quả do cùng epoch 120.
+    best\_clinical\_valid.pt (epoch 90) cho strict thấp hơn rõ rệt trong khi
+    clinical-valid chỉ tăng nhẹ (+0.34 pp), nên không được chọn làm checkpoint
+    chính.}
+\end{table}
+
+\end{document}

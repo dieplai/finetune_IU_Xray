@@ -1,38 +1,81 @@
-# Byte-compiled / optimized / DLL files
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
-# ML Output & Checkpoints
-*.pt
-*.pth
-*.ckpt
-best.pt
+# Virtual environments
+.venv/
+venv/
+env/
 
-# Datasets & Scripts
-data/
-archive/
-v8_dataset/
-*.zip
-_*.py
-
-# Logs & History
-v8_outputs/
-train.log
-history.csv
-*.json
-
-# IDE
+# Local IDE / assistant metadata
 .vscode/
 .idea/
 .claude/
 
-# Sensitive & Environment
+# Secrets and local auth
 .env
-.venv
-env/
-venv/
+.env.*
 .ssh_pass
+rclone_auth_*.txt
 
-# Ignore other projects
+# Datasets and external project copies
+data/
+data_kaggle/
 LVTN_2026/
+tmpvme9crfg/
+archive/
+v8_dataset/
+
+# Keep the fixed benchmark split in git; it is small and required for fair comparison.
+!benchmark_suite/data/
+!benchmark_suite/data/**
+
+# Model checkpoints and training outputs
+good_epochs/
+runs/
+outputs/
+v8_outputs/
+server_results/
+*_results/
+v*_a100*/
+v*_curriculum*/
+wandb/
+mlruns/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+best.pt
+history.csv
+train.log
+
+# Generated bundles and installers
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.exe
+
+# Generated logs and temporary files
+*.log
+*.tmp
+tmp_*.txt
+*.out.log
+*.err.log
+
+# LaTeX build byproducts; keep .tex/.md/.pdf reports trackable
+reports/.miktex/
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

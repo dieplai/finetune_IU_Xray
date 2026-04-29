@@ -1,0 +1,10 @@
+{
+  "seed": 42,
+  "csv_path": "data\\v8_clean.csv",
+  "manifest_csv": "benchmark_suite/data/iu_xray_test_manifest_seed42.csv",
+  "patient_ids_json": "benchmark_suite/data/iu_xray_test_patient_ids_seed42.json",
+  "fixed_queries_csv": "benchmark_suite/data/iu_xray_fixed_qualitative_queries_seed42.csv",
+  "test_rows": 724,
+  "test_patients": 377,
+  "fixed_queries": 20
+}

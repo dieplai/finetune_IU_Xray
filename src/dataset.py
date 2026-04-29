@@ -19,7 +19,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Sampler
 from PIL import Image
 import torchvision.transforms as T
-import config
+from src import config
 
 # CheXpert pathology columns used as cluster labels (14 → 12 after merge/drop)
 # Excludes 'No Finding' (too common, causes over-smoothing)
@@ -165,20 +165,22 @@ class PatientPairBatchSampler(Sampler):
         self.batch_size = batch_size
         self.shuffle    = shuffle
 
-        # Build patient_id -> {FRONTAL: dataset_idx, LATERAL: dataset_idx}
+        # Build patient_id -> {FRONTAL: [dataset_idx...], LATERAL: [dataset_idx...]}
+        # Some patients have multiple images per view; sample one each epoch
+        # instead of dropping the extras permanently.
         patient_views = {}
         for idx in range(len(dataset)):
             row  = dataset.df.iloc[idx]
             pid  = row['patient_id']
             proj = row['proj_type']
             if pid not in patient_views:
-                patient_views[pid] = {}
-            patient_views[pid][proj] = idx
+                patient_views[pid] = {'FRONTAL': [], 'LATERAL': []}
+            patient_views[pid][proj].append(idx)
 
         # Only keep patients that have BOTH frontal AND lateral
         self.pair_patients = sorted([
             pid for pid, views in patient_views.items()
-            if 'FRONTAL' in views and 'LATERAL' in views
+            if len(views['FRONTAL']) > 0 and len(views['LATERAL']) > 0
         ])
         self.patient_views = {
             pid: patient_views[pid] for pid in self.pair_patients
@@ -203,8 +205,8 @@ class PatientPairBatchSampler(Sampler):
             batch_patients = patients[start : start + n_per_batch]
             indices = []
             for pid in batch_patients:
-                indices.append(self.patient_views[pid]['FRONTAL'])
-                indices.append(self.patient_views[pid]['LATERAL'])
+                indices.append(np.random.choice(self.patient_views[pid]['FRONTAL']))
+                indices.append(np.random.choice(self.patient_views[pid]['LATERAL']))
             # Shuffle within batch so frontal/lateral interleave randomly
             np.random.shuffle(indices)
             yield indices

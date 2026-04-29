@@ -45,12 +45,20 @@ EVAL_EVERY  = 3       # eval on val set every 3 epochs
 FREEZE_EP   = 5       # freeze encoders for first 5 epochs, train heads only
 DISEASE_EP  = 3       # Clustering-Guided loss activates at epoch 3
 
-LR_HEAD     = 1e-4    # Projection heads
-LR_ENC      = 1e-5    # Encoders (after unfreeze)
-LR_TEXT_ENC = 5e-5    # Bio_ClinicalBERT (slightly higher than vision)
+LR_HEAD     = 2e-4    # Projection heads (increased for faster head training)
+LR_ENC      = 1e-5    # Vision encoder (ImageNet pretrained — keep stable)
+LR_TEXT_ENC = 1e-4    # Bio_ClinicalBERT (needs aggressive adaptation to IU-Xray)
 WEIGHT_DECAY= 0.01
 MAX_GRAD    = 1.0
-CROSS_VIEW_W= 0.3
+CROSS_VIEW_W= 0.5     # Increased: frontal↔lateral signal is strong
+
+# ── Hierarchical Clustering Loss (Task 3) ─────────────────────────────────────
+CLUSTER_START  = 5    # epoch to activate IDF-Jaccard clustering loss
+PROTO_START    = 30   # epoch to activate prototype bank alignment
+CLUSTER_ALPHA  = 0.4  # IDF-Jaccard blend weight (0=hard only, 1=soft only)
+CLUSTER_TEMP   = 1.0  # soft label temperature (higher=smoother cluster boundaries)
+PROTO_MOMENTUM = 0.95 # EMA decay for prototype centroids
+PROTO_WEIGHT   = 0.05 # weight of prototype alignment loss
 
 IMG_MEAN = (0.485, 0.456, 0.406)
 IMG_STD  = (0.229, 0.224, 0.225)
@@ -73,9 +81,8 @@ def log(msg, also_print=True):
 # Images already 384x384 → skip T.Resize, only do augmentation
 def train_tf():
     return T.Compose([
-        T.RandomHorizontalFlip(p=0.3),
         T.RandomAffine(degrees=3, translate=(0.02, 0.02), scale=(0.95, 1.05)),
-        T.ColorJitter(brightness=0.15, contrast=0.15),
+        T.ColorJitter(brightness=0.1, contrast=0.1),
         T.ToTensor(),
         T.Normalize(IMG_MEAN, IMG_STD),
     ])
@@ -169,39 +176,9 @@ def collate(batch):
     }
 
 
-# ── Model ─────────────────────────────────────────────────────────────────────
+# ── Model & Loss ──────────────────────────────────────────────────────────────
 from src.models import MedicalSwinBERT, init_tokenizer
-
-# ── Loss: Clustering-Guided InfoNCE ───────────────────────────────────────────
-def clustering_guided_infonce(logits, labels):
-    """
-    Task 3 of paper: if img A and report B share a disease cluster,
-    they are NOT treated as negatives.
-
-    labels[:, 0]  = No Finding
-    labels[:, 1:] = 13 pathological findings
-
-    Mask[i,j] = True if:
-      - BOTH have at least one SAME pathological finding (overlap), OR
-      - BOTH are "No Finding" (same normal cluster)
-    """
-    path_labs = labels[:, 1:]              # (B, 13) — exclude No Finding
-    is_normal = (path_labs.sum(-1) == 0)  # (B,)
-
-    # Shared pathology: any common positive finding
-    overlap     = (path_labs.unsqueeze(1) * path_labs.unsqueeze(0)).sum(-1) > 0  # (B,B)
-    both_normal = is_normal.unsqueeze(1) & is_normal.unsqueeze(0)                 # (B,B)
-
-    mask = (overlap | both_normal).float()     # (B, B) — soft positive mask
-    mask_sum = mask.sum(-1).clamp(min=1)
-
-    log_i2t = F.log_softmax(logits,   dim=-1)
-    log_t2i = F.log_softmax(logits.T, dim=-1)
-
-    loss_i2t = -(mask   * log_i2t).sum(-1) / mask_sum
-    loss_t2i = -(mask.T * log_t2i).sum(-1) / mask_sum
-
-    return (loss_i2t.mean() + loss_t2i.mean()) / 2
+from src.loss   import CombinedLoss, CrossViewLoss
 
 
 def cross_view_loss(logits_fv_lv):
@@ -212,6 +189,29 @@ def cross_view_loss(logits_fv_lv):
     labels = torch.arange(n, device=logits_fv_lv.device)
     return (F.cross_entropy(logits_fv_lv, labels) +
             F.cross_entropy(logits_fv_lv.T, labels)) / 2
+
+
+def collect_cross_view_pairs(embeddings, patient_ids, projections):
+    """Match frontal/lateral embeddings by patient_id, not by batch order."""
+    by_pid = {}
+    for idx, (pid, proj) in enumerate(zip(patient_ids, projections)):
+        view = str(proj).strip().lower()[:1]
+        if view not in {'f', 'l'}:
+            continue
+        if pid not in by_pid:
+            by_pid[pid] = {'f': [], 'l': []}
+        by_pid[pid][view].append(idx)
+
+    f_idx, l_idx = [], []
+    for pid, views in by_pid.items():
+        n_pairs = min(len(views['f']), len(views['l']))
+        for i in range(n_pairs):
+            f_idx.append(views['f'][i])
+            l_idx.append(views['l'][i])
+
+    if len(f_idx) < 2:
+        return None, None
+    return embeddings[f_idx], embeddings[l_idx]
 
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
@@ -277,8 +277,10 @@ def evaluate(model, loader, tokenizer, device):
     )
 
     # ── CLUSTER ground truth: shared pathological finding ───────────────────
-    # labs[:, 0] = No Finding → exclude (too common, not a meaningful cluster)
-    path_labs = torch.tensor(labs[:, 1:], dtype=torch.float32)  # (N, 13)
+    # Use the same 12-dim merged representation as training.
+    labs_t = torch.tensor(labs, dtype=torch.float32)
+    card_merged = torch.maximum(labs_t[:, 1], labs_t[:, 2]).unsqueeze(1)
+    path_labs = torch.cat([card_merged, labs_t[:, 3:]], dim=1)  # (N, 12)
     # Any shared pathology: dot product > 0 means at least 1 shared label
     overlap = (path_labs @ path_labs.T) > 0                      # (N, N) bool
     # For pure "No Finding" pairs: both have no pathology → same cluster
@@ -342,6 +344,21 @@ def main():
     log(f"  Total params    : {n_total:.1f}M")
     log(f"  Trainable params: {n_train:.1f}M")
 
+    # Task 3: Hierarchical Clustering-Guided Loss
+    # [C1] IDF-Weighted Jaccard  [C2] Healthy cluster  [C3] Prototype Bank
+    criterion = CombinedLoss(
+        n_clusters    = 12,
+        embed_dim     = 512,
+        alpha         = CLUSTER_ALPHA,
+        cluster_temp  = CLUSTER_TEMP,
+        proto_momentum= PROTO_MOMENTUM,
+        proto_weight  = PROTO_WEIGHT,
+        cluster_start = CLUSTER_START,
+        proto_start   = PROTO_START,
+    ).to(device)
+    log(f"  CombinedLoss: cluster_start={CLUSTER_START}, proto_start={PROTO_START}")
+    log(f"  IDF-Jaccard alpha={CLUSTER_ALPHA}, temp={CLUSTER_TEMP}")
+
     # Phase 1: freeze encoders, train projection heads only
     log(f"\n[PHASE 1] Freeze encoders for {FREEZE_EP} epochs, train heads only")
     for p in model.get_backbone_params():
@@ -390,7 +407,7 @@ def main():
 
         # ── Training ──
         model.train()
-        losses_total, losses_cluster, losses_cv = [], [], []
+        losses_total, losses_cluster, losses_cv, losses_proto = [], [], [], []
         opt.zero_grad()
 
         for step, batch in enumerate(train_loader):
@@ -407,27 +424,28 @@ def main():
             with torch.amp.autocast('cuda'):
                 ie, te = model(imgs, tok['input_ids'], tok['attention_mask'])
 
+                # Fix: clamp to [log(1), log(100)] — let model learn temperature freely
                 with torch.no_grad():
-                    model.logit_scale.data.clamp_(np.log(5.0), np.log(100.0))
+                    model.logit_scale.data.clamp_(np.log(1.0), np.log(100.0))
                 scale  = model.logit_scale.exp()
                 logits = scale * (ie @ te.T)
 
-                # Primary: Clustering-Guided InfoNCE (activates at DISEASE_EP)
-                if epoch >= DISEASE_EP:
-                    loss_cluster = clustering_guided_infonce(logits, labels)
-                else:
-                    # Warm-up: standard InfoNCE (diagonal = positives)
-                    lbls_std = torch.arange(logits.shape[0], device=device)
-                    loss_cluster = (F.cross_entropy(logits, lbls_std) +
-                                    F.cross_entropy(logits.T, lbls_std)) / 2
+                # Convert 14-dim PATH_COLS labels → 12-dim CHEXPERT_COLS disease_vecs
+                # Merge Enlarged Cardiomediastinum (index 1) into Cardiomegaly (index 2)
+                card_merged  = torch.maximum(labels[:, 1], labels[:, 2])   # (B,)
+                disease_vecs = torch.cat([card_merged.unsqueeze(1), labels[:, 3:]], dim=1)  # (B, 12)
 
-                # Secondary: Cross-View InfoNCE (frontal <-> lateral same patient)
-                f_idx = [i for i, p in enumerate(projs) if p.startswith('f')]
-                l_idx = [i for i, p in enumerate(projs) if p.startswith('l')]
-                if len(f_idx) >= 2 and len(l_idx) >= 2:
-                    n_pairs = min(len(f_idx), len(l_idx))
-                    f_emb = ie[f_idx[:n_pairs]]
-                    l_emb = ie[l_idx[:n_pairs]]
+                # Primary: Task 3 — Hierarchical Clustering-Guided Loss
+                # Phase 1 (ep < cluster_start): MultiPositiveInfoNCE (FIXED: no warm-up bug)
+                # Phase 2 (ep >= cluster_start): + IDF-Jaccard soft labels [C1][C2]
+                # Phase 3 (ep >= proto_start)  : + Prototype alignment [C3]
+                loss_cluster, loss_main, loss_proto = criterion(
+                    logits, ie, te, pids, disease_vecs, epoch
+                )
+
+                # Secondary: Cross-View InfoNCE (frontal ↔ lateral same patient)
+                f_emb, l_emb = collect_cross_view_pairs(ie, pids, projs)
+                if f_emb is not None and l_emb is not None:
                     cv_logits = scale * (f_emb @ l_emb.T)
                     loss_cv   = cross_view_loss(cv_logits)
                 else:
@@ -439,8 +457,9 @@ def main():
             scaler.scale(loss).backward()
 
             losses_total.append((loss_cluster + CROSS_VIEW_W * loss_cv).item())
-            losses_cluster.append(loss_cluster.item())
+            losses_cluster.append(loss_main.item())
             losses_cv.append(loss_cv.item())
+            losses_proto.append(loss_proto.item())
 
             if (step + 1) % GRAD_ACCUM == 0 or (step + 1) == len(train_loader):
                 scaler.unscale_(opt)
@@ -456,6 +475,7 @@ def main():
         avg_total   = float(np.mean(losses_total))
         avg_cluster = float(np.mean(losses_cluster))
         avg_cv      = float(np.mean(losses_cv))
+        avg_proto   = float(np.mean(losses_proto))
         temp        = model.logit_scale.exp().item()
         elapsed     = time.time() - t0
 
@@ -489,7 +509,7 @@ def main():
 
             log(f"\n{'='*60}")
             log(f"Epoch [{epoch:03d}/{NUM_EPOCHS}]  "
-                f"Loss={avg_total:.4f} (cluster={avg_cluster:.4f} cv={avg_cv:.4f})  "
+                f"Loss={avg_total:.4f} (clust={avg_cluster:.4f} cv={avg_cv:.4f} proto={avg_proto:.4f})  "
                 f"Temp={temp:.1f}  Time={elapsed:.0f}s")
             log(f"")
             log(f"  [STRICT  - same patient]")
@@ -506,7 +526,7 @@ def main():
             log(f"  {bmark}")
         else:
             log(f"Epoch [{epoch:03d}/{NUM_EPOCHS}]  "
-                f"Loss={avg_total:.4f} (cluster={avg_cluster:.4f} cv={avg_cv:.4f})  "
+                f"Loss={avg_total:.4f} (clust={avg_cluster:.4f} cv={avg_cv:.4f} proto={avg_proto:.4f})  "
                 f"Temp={temp:.1f}  Time={elapsed:.0f}s")
 
     # ── Final evaluation on test set ──

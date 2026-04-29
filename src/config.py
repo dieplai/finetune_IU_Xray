@@ -28,11 +28,11 @@ v4 strategy — asymmetric learning rate based on zero-shot diagnostic:
 """
 import os
 
-# ── Data paths (server: n2.ckey.vn) ───────────────────────────────────────────
-DATA_DIR   = "/root/v8_dataset"
+# ── Data paths (Local execution) ───────────────────────────────────────────
+DATA_DIR   = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 CSV_PATH   = os.path.join(DATA_DIR, "v8_clean.csv")
 IMG_DIR    = os.path.join(DATA_DIR, "images_384")   # pre-resized 384x384
-OUTPUT_DIR = "/root/v8_outputs"
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results", "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Images are already resized to 384x384 -> skip T.Resize in DataLoader
