@@ -102,7 +102,7 @@ Mô tả chính:
 Nên viết rõ:
 
 ```text
-Pairs from different patients but sharing pathology labels are treated as clinically related positives/soft positives rather than ordinary hard negatives.
+Pairs from different patients but sharing pathology labels are treated as clinically related positives/soft positives rather than unrelated negatives.
 ```
 
 ### 5.5 Curriculum Training
@@ -207,7 +207,7 @@ Nên có section limitation rõ ràng:
 3. Cluster metric có thể bị ảnh hưởng bởi normal/broad labels.
 4. Strict R@1 còn thấp.
 5. Chưa đánh giá external dataset như MIMIC-CXR.
-6. Chưa có đủ ablation cho prototype/HNM vì final v8 không bật hai thành phần đó.
+6. Chưa có đủ ablation độc lập cho từng thành phần chính như IDF-Jaccard, Healthy Cluster và clinical curriculum.
 
 Viết limitation tốt sẽ làm paper đáng tin hơn, không yếu đi.
 
@@ -222,7 +222,7 @@ Nên claim:
 Không nên claim:
 
 - SOTA trên IU-Xray nếu không có benchmark chuẩn cùng split.
-- Hard negative mining/prototype bank là đóng góp chính của result v8, vì final config không bật.
+- Các thuật toán đã bị loại khỏi code clean là đóng góp chính của result v8.
 - Cluster R@1 cao đồng nghĩa model strict retrieval tốt.
 
 ## 11. Việc Cần Làm Trước Khi Nộp

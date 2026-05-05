@@ -73,27 +73,41 @@ class StudyTrainingLogicTests(unittest.TestCase):
         self.assertFalse(mask[0, 2].item())
         self.assertTrue(mask[2, 2].item())
 
-    def test_intra_cluster_ranking_loss_penalizes_hard_cluster_confusion(self):
+    def test_study_batch_sampler_fills_last_batch(self):
+        df = pd.DataFrame([
+            make_row("p1", "img1.png", "Frontal", "r1", "Edema"),
+            make_row("p2", "img2.png", "Frontal", "r2", "Edema"),
+            make_row("p3", "img3.png", "Frontal", "r3", "Edema"),
+        ])
+        ds = study.StudyIUXrayDataset(
+            df=df,
+            img_dir="unused",
+            transform=base.get_val_transform(),
+            train_mode=False,
+        )
+        sampler = study.StudyBatchSampler(ds, batch_size=2, seed=42)
+        batches = list(iter(sampler))
+        self.assertEqual(len(batches), 2)
+        self.assertTrue(all(len(batch) == 2 for batch in batches))
+
+    def test_clinical_supervised_contrastive_uses_non_normal_overlap(self):
         dv = torch.tensor([
             [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # p1
             [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # p2 same cluster
             [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # p3 different cluster
         ], dtype=torch.float32)
-        loss_fn = study.IntraClusterRankingLoss(margin=0.05)
+        loss_fn = study.ClinicalSupervisedContrastiveLoss()
 
-        bad_logits = torch.tensor([
+        logits = torch.tensor([
             [0.30, 0.34, 0.10],
             [0.33, 0.31, 0.10],
             [0.10, 0.09, 0.35],
         ], dtype=torch.float32)
-        good_logits = torch.tensor([
-            [0.40, 0.20, 0.10],
-            [0.20, 0.41, 0.10],
-            [0.10, 0.09, 0.35],
-        ], dtype=torch.float32)
 
-        self.assertGreater(loss_fn(bad_logits, dv).item(), 0.0)
-        self.assertAlmostEqual(loss_fn(good_logits, dv).item(), 0.0, places=6)
+        self.assertGreater(loss_fn(logits, dv).item(), 0.0)
+
+        no_overlap = torch.eye(3, len(base.CHEXPERT_COLS), dtype=torch.float32)
+        self.assertAlmostEqual(loss_fn(logits, no_overlap).item(), 0.0, places=6)
 
 
 if __name__ == "__main__":

@@ -106,27 +106,6 @@ class TrainingLogicTests(unittest.TestCase):
         ])
         self.assertTrue(torch.equal(mask.cpu(), expected))
 
-    def test_collect_cross_view_pairs_matches_by_patient_after_shuffle(self):
-        embeddings = torch.arange(24, dtype=torch.float32).reshape(6, 4)
-        patient_ids = ["p2", "p1", "p3", "p1", "p2", "p3"]
-        projections = ["l", "f", "f", "l", "f", "l"]
-
-        f_emb, l_emb = t.collect_cross_view_pairs(embeddings, patient_ids, projections)
-
-        self.assertIsNotNone(f_emb)
-        self.assertIsNotNone(l_emb)
-        self.assertEqual(f_emb.shape[0], 3)
-        observed_pairs = {
-            (tuple(f.tolist()), tuple(l.tolist()))
-            for f, l in zip(f_emb, l_emb)
-        }
-        expected_pairs = {
-            (tuple(embeddings[1].tolist()), tuple(embeddings[3].tolist())),
-            (tuple(embeddings[4].tolist()), tuple(embeddings[0].tolist())),
-            (tuple(embeddings[2].tolist()), tuple(embeddings[5].tolist())),
-        }
-        self.assertEqual(observed_pairs, expected_pairs)
-
     def test_recall_at_k_hits_expected_topk(self):
         sim = torch.tensor([
             [0.9, 0.8, 0.1],
@@ -140,25 +119,6 @@ class TrainingLogicTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["R@1"], 50.0)
         self.assertAlmostEqual(metrics["R@2"], 100.0)
         self.assertAlmostEqual(metrics["R@3"], 100.0)
-
-    def test_patient_pair_sampler_only_uses_patients_with_both_views(self):
-        df = pd.DataFrame({
-            "patient_id": ["p1", "p1", "p2", "p2", "p3"],
-            "projection": ["Frontal", "Lateral", "Frontal", "Lateral", "Frontal"],
-            "image_id": [f"img_{i}.png" for i in range(5)],
-            "org_caption": [f"cap {i}" for i in range(5)],
-        })
-
-        class DummyDataset:
-            def __init__(self, df):
-                self.df = df
-
-        sampler = t.PatientPairSampler(DummyDataset(df), batch_size=4, shuffle=False)
-        batches = list(iter(sampler))
-        self.assertEqual(len(batches), 1)
-        batch = batches[0]
-        batch_pids = [str(df.iloc[i]["patient_id"]) for i in batch]
-        self.assertEqual(sorted(set(batch_pids)), ["p1", "p2"])
 
     def test_iuxray_dataset_loads_fields_and_labels(self):
         row = {

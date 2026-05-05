@@ -4,17 +4,14 @@ train_single_gpu.py
 ===================
 Single-GPU version of the Hierarchical Clustering-Guided Medical VLM.
 
-Refactored from train_kaggle.py (2×T4 DDP version).
-All 3 paper contributions are fully preserved:
+This file provides the shared baseline utilities used by train_proposed.py:
   [C1] IDF-Weighted Jaccard Similarity   — rare diseases weighted more
-  [C2] Healthy Prototype Cluster         — No Finding patients form cluster
-  [C3] Dual Prototype Bank with EMA      — dynamic disease centroids
+  [C2] Healthy Cluster                   — No Finding patients form a cluster
 
 Model: SwinV2-Base (384×384) + Bio_ClinicalBERT + MLP projection heads
 Data : v8_clean.csv  (7,322 rows, 3,772 patients, 3,328 paired F+L)
        - 14 CheXpert columns as hard labels (No Finding inclusive)
        - projection: "Frontal" / "Lateral"
-       - PatientPairSampler ensures each batch has BS//2 patients × 2 views
 
 Run:
   python train_single_gpu.py
@@ -35,7 +32,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data import DataLoader, Dataset
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from transformers import AutoTokenizer, AutoModel
@@ -80,17 +77,13 @@ LR_ENC       = 1e-5   # SwinV2-Base backbone (conservative; ImageNet pretrained)
 LR_TEXT      = 1e-4   # Bio_ClinicalBERT (needs stronger adaptation than vision)
 WEIGHT_DECAY = 0.01
 MAX_GRAD     = 1.0    # gradient norm clipping
-CROSS_VIEW_W = 0.5    # weight of frontal↔lateral cross-view InfoNCE loss
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TASK 3: HIERARCHICAL CLUSTERING-GUIDED LOSS  [C1][C2][C3]
+#  TASK 3: CLUSTERING-GUIDED LOSS  [C1][C2]
 # ══════════════════════════════════════════════════════════════════════════════
 CLUSTER_START  = 11   # epoch to activate IDF-Jaccard clustering (after FREEZE_EP)
-PROTO_START    = 40   # epoch to activate prototype bank (after clustering stabilizes)
 CLUSTER_ALPHA  = 0.4  # blend: (1-α)·hard_label + α·idf_jaccard_soft
 CLUSTER_TEMP   = 1.0  # soft label temperature (higher → smoother boundaries)
-PROTO_MOMENTUM = 0.95 # EMA decay for prototype centroids
-PROTO_WEIGHT   = 0.05 # weight of prototype alignment loss in total loss
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DATA SCHEMA
@@ -221,77 +214,6 @@ class IUXrayDataset(Dataset):
             "proj"   : str(row.get("projection", "")).strip().lower()[:1],
             "labels" : torch.from_numpy(labs),   # shape (14,)
         }
-
-
-class PatientPairSampler(Sampler):
-    """
-    Batch sampler that guarantees each batch contains exactly:
-      (batch_size // 2) patients × 2 views (Frontal + Lateral)
-
-    Motivation: cross-view InfoNCE needs paired F/L images within the same
-    batch. Only patients with BOTH views available are included.
-
-    Data insight: 3,328 of 3,772 total patients have both F and L views.
-    With BS=4 (2 patients × 2 views), we get ~1,329 batches/epoch from
-    the ~2,659 paired training patients.
-
-    Args:
-        dataset    : IUXrayDataset instance
-        batch_size : must be even (BS//2 patients per batch)
-        shuffle    : shuffle patient order each epoch
-        epoch_seed : base seed for reproducibility (call set_epoch() each epoch)
-    """
-
-    def __init__(self, dataset: IUXrayDataset, batch_size: int, shuffle: bool = True):
-        if batch_size % 2 != 0:
-            raise ValueError(f"batch_size must be even, got {batch_size}")
-        self.B       = batch_size
-        self.shuffle = shuffle
-        self._epoch  = 0
-
-        # Build {patient_id: {'F': [row_idx...], 'L': [row_idx...]}} map.
-        # Some patients have multiple images per view; sample one per view each
-        # epoch instead of silently dropping the extras forever.
-        df = dataset.df
-        pv: dict = {}
-        for i, row in df.iterrows():
-            pid  = str(row["patient_id"])
-            proj = str(row.get("projection", "")).strip().lower()
-            view = "F" if proj.startswith("f") else "L"
-            if pid not in pv:
-                pv[pid] = {"F": [], "L": []}
-            pv[pid][view].append(i)
-
-        # Keep only patients that have both views
-        self.pairs = {
-            pid: v for pid, v in pv.items()
-            if len(v["F"]) > 0 and len(v["L"]) > 0
-        }
-        self.pids  = sorted(self.pairs.keys())
-        n_per      = batch_size // 2
-        self._n    = len(self.pids) // n_per
-
-    def __len__(self) -> int:
-        return self._n
-
-    def set_epoch(self, epoch: int) -> None:
-        """Call at the start of each epoch for deterministic shuffling."""
-        self._epoch = epoch
-
-    def __iter__(self):
-        rng   = np.random.default_rng(self._epoch * 1000 + 7)
-        pids  = list(self.pids)
-        if self.shuffle:
-            rng.shuffle(pids)
-        n_per = self.B // 2
-        for start in range(0, len(pids) - n_per + 1, n_per):
-            batch_pids = pids[start : start + n_per]
-            idxs: list[int] = []
-            for pid in batch_pids:
-                idxs.append(rng.choice(self.pairs[pid]["F"]))
-                idxs.append(rng.choice(self.pairs[pid]["L"]))
-            rng.shuffle(idxs)
-            yield idxs
 
 
 def collate_fn(batch: list[dict]) -> dict:
@@ -577,7 +499,7 @@ class HierarchicalClusterLoss(nn.Module):
         idf_w   = _idf_weights(device)
         sim_mat = idf_weighted_jaccard(dv, idf_w)
 
-        # [C2] Healthy prototype: both-normal pairs get bonus similarity 0.4
+        # [C2] Healthy Cluster: both-normal pairs get bonus similarity 0.4
         is_normal   = (dv.sum(-1) == 0)                                    # (B,)
         both_normal = (is_normal.unsqueeze(1) & is_normal.unsqueeze(0)).float()
         sim_mat     = (sim_mat + both_normal * 0.4).clamp(max=1.0)
@@ -590,130 +512,29 @@ class HierarchicalClusterLoss(nn.Module):
         return (l_i2t + l_t2i) / 2
 
 
-class DualPrototypeBank(nn.Module):
-    """
-    [C3] K+1 disease cluster centroids updated via Exponential Moving Average.
-
-    Prototype layout:
-      proto[0]    : Healthy centroid (patients with No Finding only)
-      proto[1..K] : Per-disease centroids (one per CHEXPERT_COLS disease, K=12)
-
-    Multi-morbid patients receive proportional mixture assignment:
-      assign[sample, k] = disease_count[k] / total_diseases  for k ∈ [1..K]
-
-    This avoids forcing multi-label patients into a single cluster.
-    The bank only activates after PROTO_START epochs so early noisy
-    embeddings don't corrupt centroid initialization.
-
-    EMA update:
-      proto[k] ← normalize(momentum · proto[k] + (1-momentum) · batch_mean[k])
-    """
-
-    def __init__(
-        self,
-        n_clusters: int = 12,
-        embed_dim: int = EMBED_DIM,
-        momentum: float = PROTO_MOMENTUM,
-        weight: float = PROTO_WEIGHT,
-    ):
-        super().__init__()
-        self.weight   = weight
-        self.momentum = momentum
-        # Register as buffer so it's saved in state_dict and moved with .to(device)
-        self.register_buffer(
-            "protos",
-            F.normalize(torch.randn(n_clusters + 1, embed_dim), dim=-1),
-        )
-        self.register_buffer("ready", torch.tensor(False))
-
-    @torch.no_grad()
-    def update(self, emb: torch.Tensor, disease_vecs: torch.Tensor) -> None:
-        """Update all K+1 prototypes via EMA using current batch embeddings."""
-        dv = disease_vecs.float()
-
-        # Healthy prototype (index 0)
-        is_normal = (dv.sum(-1) == 0)
-        if is_normal.sum() > 0:
-            batch_mean  = F.normalize(emb[is_normal].mean(0), dim=-1)
-            self.protos[0] = F.normalize(
-                self.momentum * self.protos[0] + (1 - self.momentum) * batch_mean,
-                dim=-1,
-            )
-
-        # Per-disease prototypes (indices 1..K)
-        K = self.protos.shape[0] - 1
-        for k in range(K):
-            mask = dv[:, k] > 0
-            if mask.sum() > 0:
-                batch_mean = F.normalize(emb[mask].mean(0), dim=-1)
-                self.protos[k + 1] = F.normalize(
-                    self.momentum * self.protos[k + 1] + (1 - self.momentum) * batch_mean,
-                    dim=-1,
-                )
-        self.ready.fill_(True)
-
-    def alignment_loss(
-        self,
-        img_emb: torch.Tensor,
-        txt_emb: torch.Tensor,
-        disease_vecs: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Push each sample's embedding toward its assigned prototype mixture.
-
-        Cosine loss: 1 - cosine_similarity(embedding, target_prototype)
-        target = normalized weighted sum of relevant prototypes.
-        """
-        if not self.ready:
-            return img_emb.sum() * 0.0   # zero loss, no gradient, before warmup
-
-        dv   = disease_vecs.float()
-        B    = dv.shape[0]
-        norm = (dv.sum(-1) == 0)                   # healthy samples mask
-
-        # Soft assignment matrix (B, K+1)
-        assign = torch.zeros(B, self.protos.shape[0], device=dv.device)
-        assign[:, 0] = norm.float()                # healthy → proto[0]
-        path_sum     = dv.sum(-1, keepdim=True).clamp(min=1)
-        assign[:, 1:] = (dv / path_sum) * (~norm).float().unsqueeze(-1)
-
-        target = F.normalize(assign @ self.protos, dim=-1)   # (B, D)
-
-        l_img = (1 - F.cosine_similarity(img_emb, target.detach())).mean()
-        l_txt = (1 - F.cosine_similarity(txt_emb, target.detach())).mean()
-        return (l_img + l_txt) / 2
-
-
 class CombinedLoss(nn.Module):
     """
-    Three-phase loss schedule matching the paper's Task 3 contributions:
+    Two-stage loss schedule used by the proposed paper run:
 
     Phase 1 (epoch < cluster_start):
-      MultiPositiveInfoNCE — standard contrastive loss with multi-positive support.
+      MultiPositiveInfoNCE — strict contrastive loss with multi-positive support.
       Purpose: warm up projection heads before noisy soft labels are introduced.
 
-    Phase 2 (cluster_start ≤ epoch < proto_start):
-      HierarchicalClusterLoss [C1][C2] — IDF-Jaccard soft labels + healthy cluster.
+    Phase 2 (epoch ≥ cluster_start):
+      HierarchicalClusterLoss [C1][C2] — IDF-Jaccard soft labels + Healthy Cluster.
       Purpose: encode disease similarity structure into the embedding space.
-
-    Phase 3 (epoch ≥ proto_start):
-      Phase 2 + DualPrototypeBank [C3] — EMA centroids pull embeddings to clusters.
-      Purpose: global cluster regularization via dynamic disease prototypes.
     """
 
     def __init__(
         self,
         cluster_start: int  = CLUSTER_START,
-        proto_start: int    = PROTO_START,
         alpha: float        = CLUSTER_ALPHA,
         temperature: float  = CLUSTER_TEMP,
     ):
         super().__init__()
         self.cluster_start = cluster_start
-        self.proto_start   = proto_start
         self.mp_loss       = MultiPositiveInfoNCE()
         self.cluster_loss  = HierarchicalClusterLoss(alpha=alpha, temperature=temperature)
-        self.proto_bank    = DualPrototypeBank()
 
     def forward(
         self,
@@ -723,85 +544,18 @@ class CombinedLoss(nn.Module):
         patient_ids: list[str],
         disease_vecs: torch.Tensor,
         epoch: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
           total_loss : combined loss (backprop target)
           main_loss  : primary contrastive/clustering loss (for logging)
-          proto_loss : prototype alignment loss (0.0 before proto_start)
         """
         if epoch < self.cluster_start:
             main_loss  = self.mp_loss(logits, patient_ids)
-            proto_loss = logits.sum() * 0.0          # zero, no gradient
-
         else:
             main_loss = self.cluster_loss(logits, patient_ids, disease_vecs)
 
-            if epoch >= self.proto_start:
-                # Update prototypes with detached embeddings (no gradient to bank)
-                all_emb = torch.cat([img_emb.detach(), txt_emb.detach()], dim=0)
-                all_dv  = torch.cat([disease_vecs, disease_vecs], dim=0)
-                self.proto_bank.update(all_emb, all_dv)
-                proto_loss = self.proto_bank.alignment_loss(img_emb, txt_emb, disease_vecs)
-            else:
-                proto_loss = logits.sum() * 0.0
-
-        total_loss = main_loss + self.proto_bank.weight * proto_loss
-        return total_loss, main_loss, proto_loss
-
-
-def cross_view_infonce(
-    f_emb: torch.Tensor,
-    l_emb: torch.Tensor,
-    scale: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Cross-view InfoNCE between paired frontal and lateral image embeddings.
-
-    Treats (frontal_i, lateral_i) as positive pairs, all cross-patient
-    pairs as negatives. Bidirectional: F→L and L→F.
-
-    Requires at least 2 pairs to form a meaningful contrastive batch.
-    """
-    n = f_emb.shape[0]
-    if n < 2:
-        return f_emb.sum() * 0.0    # zero loss if not enough pairs
-    sim    = scale * (f_emb @ l_emb.T)           # (n, n) logit matrix
-    labels = torch.arange(n, device=f_emb.device)
-    return (F.cross_entropy(sim, labels) + F.cross_entropy(sim.T, labels)) / 2
-
-
-def collect_cross_view_pairs(
-    embeddings: torch.Tensor,
-    patient_ids: list[str],
-    projections: list[str],
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """
-    Collect correctly matched frontal/lateral embeddings by patient_id.
-
-    The sampler shuffles within-batch order, so pairing frontal and lateral
-    samples by raw index order is incorrect.
-    """
-    by_pid: dict[str, dict[str, list[int]]] = {}
-    for idx, (pid, proj) in enumerate(zip(patient_ids, projections)):
-        view = str(proj).strip().lower()[:1]
-        if view not in {"f", "l"}:
-            continue
-        if pid not in by_pid:
-            by_pid[pid] = {"f": [], "l": []}
-        by_pid[pid][view].append(idx)
-
-    f_idx: list[int] = []
-    l_idx: list[int] = []
-    for pid, views in by_pid.items():
-        n_pairs = min(len(views["f"]), len(views["l"]))
-        for i in range(n_pairs):
-            f_idx.append(views["f"][i])
-            l_idx.append(views["l"][i])
-
-    if len(f_idx) < 2:
-        return None, None
-    return embeddings[f_idx], embeddings[l_idx]
+        return main_loss, main_loss
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -959,7 +713,7 @@ def main() -> None:
 
     log("=" * 65)
     log("  Single-GPU Medical VLM Training")
-    log("  Contributions: [C1] IDF-Jaccard  [C2] Healthy Cluster  [C3] Prototype Bank")
+    log("  Contributions: [C1] IDF-Jaccard  [C2] Healthy Cluster")
     log("=" * 65)
     log(f"  Device       : {device}")
     if device.type == "cuda":
@@ -976,8 +730,6 @@ def main() -> None:
     log(f"  Epochs       : {args.epochs}")
     log(f"  Freeze ep    : {args.freeze_ep}")
     log(f"  Cluster start: {CLUSTER_START}")
-    log(f"  Proto start  : {PROTO_START}")
-    log(f"  Cross-view w : {CROSS_VIEW_W}")
     log(f"  Output dir   : {args.out_dir}")
     log("=" * 65)
 
@@ -989,9 +741,7 @@ def main() -> None:
         "LR_HEAD": LR_HEAD, "LR_ENC": LR_ENC, "LR_TEXT": LR_TEXT,
         "WEIGHT_DECAY": WEIGHT_DECAY, "MAX_GRAD": MAX_GRAD,
         "CLUSTER_START": CLUSTER_START, "CLUSTER_ALPHA": CLUSTER_ALPHA,
-        "CLUSTER_TEMP": CLUSTER_TEMP, "PROTO_START": PROTO_START,
-        "PROTO_MOMENTUM": PROTO_MOMENTUM, "PROTO_WEIGHT": PROTO_WEIGHT,
-        "CROSS_VIEW_W": CROSS_VIEW_W,
+        "CLUSTER_TEMP": CLUSTER_TEMP,
         "effective_batch": args.batch_size * args.grad_accum,
     })
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
@@ -1022,15 +772,10 @@ def main() -> None:
     val_ds   = IUXrayDataset(df_val,   args.img_dir, get_val_transform())
     test_ds  = IUXrayDataset(df_test,  args.img_dir, get_val_transform())
 
-    pair_sampler = PatientPairSampler(train_ds, args.batch_size, shuffle=True)
-    log(
-        f"  PatientPairSampler: {len(pair_sampler.pids)} paired patients"
-        f" | {len(pair_sampler)} batches/epoch"
-    )
-
     train_loader = DataLoader(
         train_ds,
-        batch_sampler=pair_sampler,
+        batch_size=args.batch_size,
+        shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
         collate_fn=collate_fn,
@@ -1053,12 +798,9 @@ def main() -> None:
     log(f"  Total params  : {n_total:.1f}M")
 
     # ── Loss ──────────────────────────────────────────────────────────────────
-    criterion = CombinedLoss(
-        cluster_start=CLUSTER_START,
-        proto_start=PROTO_START,
-    ).to(device)
-    log(f"\n[LOSS] cluster_start={CLUSTER_START} | proto_start={PROTO_START}")
-    log(f"       alpha={CLUSTER_ALPHA} | temp={CLUSTER_TEMP} | proto_w={PROTO_WEIGHT}")
+    criterion = CombinedLoss(cluster_start=CLUSTER_START).to(device)
+    log(f"\n[LOSS] cluster_start={CLUSTER_START}")
+    log(f"       alpha={CLUSTER_ALPHA} | temp={CLUSTER_TEMP}")
 
     # AMP scaler
     scaler = torch.amp.GradScaler("cuda")
@@ -1109,8 +851,6 @@ def main() -> None:
 
     for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
-        pair_sampler.set_epoch(epoch)
-
         # ── Phase 2: Unfreeze encoders ─────────────────────────────────────
         if epoch == args.freeze_ep + 1:
             log(f"\n[PHASE 2] Unfreeze encoders at epoch {epoch}")
@@ -1131,20 +871,15 @@ def main() -> None:
             log(f"  LR: enc={LR_ENC:.0e}  text={LR_TEXT:.0e}  head={LR_HEAD:.0e}")
             log(f"  Warmup {warmup_steps} steps → CosineAnnealing ({remain_steps - warmup_steps} steps)")
 
-        # Phase 3 log
-        if epoch == PROTO_START:
-            log(f"\n[PHASE 3] Prototype bank activated at epoch {epoch}")
-
         # ── Training Loop ─────────────────────────────────────────────────
         model.train()
-        L_total, L_main, L_cv, L_proto = [], [], [], []
+        L_total, L_main = [], []
         opt.zero_grad()
 
         for step, batch in enumerate(train_loader):
             imgs   = batch["image"].to(device)
             labels = batch["labels"].to(device)
             pids   = batch["pid"]
-            projs  = batch["proj"]
             caps   = batch["caption"]
 
             tok = tokenizer(
@@ -1161,31 +896,18 @@ def main() -> None:
                 # Convert labels: 14-dim PATH_COLS → 12-dim CHEXPERT_COLS
                 disease_vecs = labels_to_disease_vecs(labels)
 
-                # [C1][C2][C3]: Hierarchical Clustering-Guided Loss
+                # [C1][C2]: IDF-Jaccard + Healthy Cluster loss
                 logits = scale * (img_emb @ txt_emb.T)
-                loss_task3, loss_main, loss_proto = criterion(
+                loss_task3, loss_main = criterion(
                     logits, img_emb, txt_emb, pids, disease_vecs, epoch
                 )
 
-                # Cross-view InfoNCE: frontal ↔ lateral of same patient
-                f_emb, l_emb = collect_cross_view_pairs(img_emb, pids, projs)
-                if f_emb is not None and l_emb is not None:
-                    loss_cv = cross_view_infonce(
-                        f_emb,
-                        l_emb,
-                        scale,
-                    )
-                else:
-                    loss_cv = img_emb.sum() * 0.0
-
-                loss = (loss_task3 + CROSS_VIEW_W * loss_cv) / args.grad_accum
+                loss = loss_task3 / args.grad_accum
 
             scaler.scale(loss).backward()
 
-            L_total.append((loss_task3 + CROSS_VIEW_W * loss_cv).item())
+            L_total.append(loss_task3.item())
             L_main.append(loss_main.item())
-            L_cv.append(loss_cv.item())
-            L_proto.append(loss_proto.item())
 
             if (step + 1) % args.grad_accum == 0 or (step + 1) == len(train_loader):
                 scaler.unscale_(opt)
@@ -1200,16 +922,13 @@ def main() -> None:
         temp    = model.logit_scale.exp().item()
         phase   = (
             "Phase1" if epoch <= args.freeze_ep
-            else "Phase2" if epoch < PROTO_START
-            else "Phase3"
+            else "Phase2"
         )
 
         log(
             f"Ep[{epoch:03d}/{args.epochs}] {phase} "
             f"loss={np.mean(L_total):.4f} "
-            f"(main={np.mean(L_main):.4f} "
-            f"cv={np.mean(L_cv):.4f} "
-            f"proto={np.mean(L_proto):.4f}) "
+            f"(main={np.mean(L_main):.4f}) "
             f"T={temp:.1f}  t={elapsed:.0f}s"
         )
 
@@ -1230,8 +949,6 @@ def main() -> None:
                 elapsed_s=float(elapsed),
                 loss=float(np.mean(L_total)),
                 loss_main=float(np.mean(L_main)),
-                loss_cv=float(np.mean(L_cv)),
-                loss_proto=float(np.mean(L_proto)),
                 temp=temp,
                 batch_size=args.batch_size,
                 grad_accum=args.grad_accum,

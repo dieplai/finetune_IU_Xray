@@ -4,7 +4,7 @@ This repository contains the thesis code for IU-Xray image-report retrieval with
 
 Core research question:
 
-> If an image and a report belong to the same clinical/pathology cluster, they should not be treated as ordinary hard negatives even when they come from different patient/study IDs.
+> If an image and a report belong to the same clinical/pathology cluster, they should not be treated as unrelated negatives even when they come from different patient/study IDs.
 
 The paper-facing implementation is:
 
@@ -49,8 +49,6 @@ outputs/
 - Fusion: view-type embedding + attention pooling over available views
 - Loss: strict contrastive warmup, IDF-Jaccard/healthy-cluster soft targets, clinical supervised contrastive curriculum
 - Final proposed run: A100, batch 32, grad accumulation 4, 150 epochs, seed 42
-
-Important implementation note: prototype-bank and hard-negative-mining hooks exist in legacy code, but the final proposed run disables them (`proto_start=999`, `rank_start=999`, `mine_start=999`). Do not claim final results come from those components unless a separate ablation is run.
 
 ## Metrics
 
@@ -130,7 +128,7 @@ python train_ablation.py no_clinical_schedule --epochs 100 --batch_size 32 --gra
 
 Presets:
 
-- `strict_only`: disables IDF-Jaccard, healthy cluster, clinical loss, HNM, prototype.
+- `strict_only`: disables IDF-Jaccard, healthy cluster, and clinical loss.
 - `cluster_only`: keeps IDF-Jaccard + healthy cluster, disables clinical supervised contrastive.
 - `no_clinical_schedule`: keeps cluster and clinical loss but uses fixed clinical weight instead of curriculum.
 - `proposed`: full current proposed configuration.

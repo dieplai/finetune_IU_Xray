@@ -67,25 +67,14 @@ WEIGHT_DECAY = base.WEIGHT_DECAY
 MAX_GRAD = base.MAX_GRAD
 
 CLUSTER_START = 12
-PROTO_START = 999
 CLUSTER_ALPHA = 0.35
 CLUSTER_TEMP = 1.0
-PROTO_MOMENTUM = base.PROTO_MOMENTUM
-PROTO_WEIGHT = 0.02
-RANK_START = 999
-RANK_MARGIN = 0.10
-RANK_TOPK = 4
-RANK_WEIGHT = 0.00
 AUX_WEIGHT = 0.02
 CLINICAL_START = 15
 CLINICAL_WEIGHT = 0.12
 BALANCED_CLINICAL_WEIGHT = 0.10
 MIN_STRICT_FOR_BALANCED = 4.00
 CLINICAL_BEST_MIN_STRICT = 3.50
-MINE_EVERY  = 999  # disabled by default in the proposed final run
-MINE_START  = 999  # disabled by default in the proposed final run
-MINE_TOPK   = 32   # top-K hard negatives per patient
-HN_FRAC     = 0.00 # proposed run keeps the sampler simple and deterministic
 MAX_VIEWS = 2
 
 IMG_MEAN = base.IMG_MEAN
@@ -385,8 +374,9 @@ def build_cluster_mask(disease_vecs: torch.Tensor) -> torch.Tensor:
 
 
 def build_clinical_cluster_mask(disease_vecs: torch.Tensor) -> torch.Tensor:
-    """Clinical ranking mask: only non-normal pairs with disease overlap.
-    Excludes both-normal pairs to prevent rank_loss collapse from trivial normal clustering.
+    """Clinical-positive mask: only non-normal pairs with disease overlap.
+    Both-normal pairs are excluded because they are too broad for clinical-valid
+    supervised contrastive learning.
     """
     path = disease_vecs.float()
     overlap = (path @ path.T) > 0
@@ -394,66 +384,13 @@ def build_clinical_cluster_mask(disease_vecs: torch.Tensor) -> torch.Tensor:
     both_non_normal = (~is_normal).unsqueeze(1) & (~is_normal).unsqueeze(0)
     return overlap & both_non_normal
 
-class IntraClusterRankingLoss(nn.Module):
-    """
-    InfoNCE-style clinical ranking loss — replaces hinge loss.
-
-    Why: hinge loss saturates after 8-10 epochs (gradient=0 once margin satisfied).
-    InfoNCE always has non-zero gradient: for each non-normal query, the true
-    positive must be ranked above ALL clinical cluster members (not just top-K).
-    This creates sustained learning signal throughout training.
-
-    For each non-normal query i (i2t direction):
-      positives  = {j : same_patient(i,j)}  (diagonal only in study-level)
-      negatives  = {j : clinical_cluster(i,j) AND j != i}
-      loss_i     = -log( exp(s_ii) / (exp(s_ii) + sum_j exp(s_ij)) )
-    """
-    def __init__(self, margin: float = RANK_MARGIN, top_k: int = RANK_TOPK):
-        super().__init__()
-        # margin/top_k kept for API compat but unused in InfoNCE formulation
-        self.margin = margin
-        self.top_k  = top_k
-
-    def forward(self, logits: torch.Tensor, disease_vecs: torch.Tensor) -> torch.Tensor:
-        device = logits.device
-        n      = logits.shape[0]
-        diag   = torch.eye(n, dtype=torch.bool, device=device)
-
-        clinical_mask = build_clinical_cluster_mask(disease_vecs.to(device))
-        # non-normal queries that have at least one clinical cluster member
-        has_clinical = clinical_mask.any(dim=-1)
-
-        if not has_clinical.any():
-            return logits.sum() * 0.0
-
-        losses = []
-        for direction, sim in [("i2t", logits), ("t2i", logits.T)]:
-            for i in range(n):
-                if not has_clinical[i]:
-                    continue
-                # positive = same patient (diagonal)
-                pos_score = sim[i, i]
-                # negatives = clinical cluster members (different patient)
-                neg_mask  = clinical_mask[i] & ~diag[i]
-                if not neg_mask.any():
-                    continue
-                neg_scores = sim[i][neg_mask]
-                # InfoNCE: -log( exp(pos) / (exp(pos) + sum exp(neg)) )
-                all_scores = torch.cat([pos_score.unsqueeze(0), neg_scores])
-                loss_i     = -pos_score + torch.logsumexp(all_scores, dim=0)
-                losses.append(loss_i)
-
-        if not losses:
-            return logits.sum() * 0.0
-        return torch.stack(losses).mean()
-
 
 class ClinicalSupervisedContrastiveLoss(nn.Module):
     """
     Pull non-normal disease-overlap peers together across image/text embeddings.
 
-    This is intentionally lighter than pairwise ranking: same-clinical-cluster peers
-    become positives instead of hard negatives, matching the thesis objective.
+    Same-clinical-cluster peers become positives instead of ordinary negatives,
+    matching the thesis objective.
     The diagonal exact match is excluded here because strict retrieval is already
     handled by the main contrastive objective.
     """
@@ -487,28 +424,19 @@ class StudyLoss(nn.Module):
     def __init__(
         self,
         cluster_start: int = CLUSTER_START,
-        proto_start: int = PROTO_START,
-        rank_start: int = RANK_START,
-        rank_weight: float = RANK_WEIGHT,
         aux_weight: float = AUX_WEIGHT,
         clinical_start: int = CLINICAL_START,
         clinical_weight: float = CLINICAL_WEIGHT,
-        rank_margin: float = RANK_MARGIN,
-        rank_topk: int = RANK_TOPK,
     ):
         super().__init__()
         self.cluster_start = cluster_start
-        self.proto_start = proto_start
-        self.rank_start = rank_start
-        self.rank_weight = rank_weight
         self.aux_weight = aux_weight
         self.clinical_start = clinical_start
         self.clinical_weight = clinical_weight
         self.base_loss = base.CombinedLoss(
-            cluster_start=cluster_start, proto_start=proto_start,
+            cluster_start=cluster_start,
             alpha=CLUSTER_ALPHA, temperature=CLUSTER_TEMP,
         )
-        self.rank_loss = IntraClusterRankingLoss(margin=rank_margin, top_k=rank_topk)
         self.clinical_loss = ClinicalSupervisedContrastiveLoss()
         self.bce = nn.BCEWithLogitsLoss()
 
@@ -528,14 +456,9 @@ class StudyLoss(nn.Module):
         txt_normal_logits: torch.Tensor,
         epoch: int,
     ):
-        loss_main, main_component, proto_component = self.base_loss(
+        loss_main, main_component = self.base_loss(
             logits, img_emb, txt_emb, patient_ids, disease_vecs, epoch
         )
-
-        if epoch >= self.rank_start:
-            rank_component = self.rank_loss(logits, disease_vecs)
-        else:
-            rank_component = logits.sum() * 0.0
 
         if epoch >= self.clinical_start:
             clinical_component = self.clinical_loss(logits, disease_vecs)
@@ -562,11 +485,10 @@ class StudyLoss(nn.Module):
 
         total = (
             loss_main
-            + self.rank_weight * rank_component
             + self.clinical_weight * clinical_component
             + self.aux_weight * aux_component
         )
-        return total, main_component, proto_component, rank_component, aux_component, clinical_component
+        return total, main_component, aux_component, clinical_component
 
 
 def clinical_weight_for_epoch(epoch: int, args: argparse.Namespace) -> float:
@@ -598,161 +520,42 @@ def clinical_weight_for_epoch(epoch: int, args: argparse.Namespace) -> float:
     return float(args.clinical_final_weight)
 
 
-# ── Hard Negative Mining ────────────────────────────────────────────────────
+class StudyBatchSampler(torch.utils.data.Sampler):
+    """Deterministic study-level batch sampler used by the final proposed run.
 
-@torch.no_grad()
-def mine_hard_negatives(
-    model: StudyMedicalSwinBERT,
-    tokenizer,
-    loader: DataLoader,
-    device: torch.device,
-    top_k: int = MINE_TOPK,
-) -> dict:
+    Each epoch shuffles patient/study IDs with a fixed seed and fills the last
+    batch to the configured batch size. This preserves stable batch geometry
+    for gradient accumulation without any hard-negative mining branch.
     """
-    Clinical hard negative mining: for each non-normal patient, find top-K most similar
-    non-normal patients WITH disease overlap. These activate the clinical ranking loss.
-    Normal patients get empty list (clinical loss skips them anyway).
-    """
-    model.eval()
-    all_ie, all_te, all_pids, all_labs = [], [], [], []
-    for batch in loader:
-        images = batch["images"].to(device)
-        vm    = batch["view_mask"].to(device)
-        vtids = batch["view_type_ids"].to(device)
-        tok = tokenizer(
-            batch["caption"], padding="max_length", truncation=True,
-            max_length=TEXT_MAX_LEN, return_tensors="pt",
-        ).to(device)
-        with torch.amp.autocast("cuda"):
-            ie, te, *_ = model(images, vm, vtids, tok["input_ids"], tok["attention_mask"])
-        all_ie.append(ie.cpu())
-        all_te.append(te.cpu())
-        all_pids.extend(batch["pid"])
-        all_labs.append(batch["labels"].cpu())
-    model.train()
 
-    ie   = torch.cat(all_ie)
-    te   = torch.cat(all_te)
-    labs = torch.cat(all_labs).float()
-    pids = np.array(all_pids)
-
-    # Disease vectors (12-dim CHEXPERT subset)
-    path_idx = [PATH_COLS.index(c) for c in CHEXPERT_COLS]
-    dv        = labs[:, path_idx].numpy()           # (N, 12)
-    is_normal = (dv.sum(axis=1) == 0)               # (N,) bool
-
-    avg = F.normalize((ie + te) / 2, dim=-1)
-    sim = (avg @ avg.T).numpy()                     # (N, N) all-pairs
-
-    hard_negs: dict = {}
-    n_clinical = 0
-    for i, pid in enumerate(pids):
-        if is_normal[i]:
-            hard_negs[pid] = []                     # skip normal: clinical loss won't use them
-            continue
-
-        row = sim[i].copy()
-        row[pids == pid] = -2.0                     # mask self
-
-        # Clinical hard negatives: non-normal + disease overlap (= will activate rank loss)
-        disease_overlap = (dv[i] @ dv.T) > 0       # (N,) bool
-        clinical_mask   = (~is_normal) & disease_overlap
-        clinical_mask[np.where(pids == pid)[0]] = False
-
-        if clinical_mask.sum() >= 3:
-            row_c   = np.where(clinical_mask, row, -3.0)
-            k       = min(top_k, int(clinical_mask.sum()))
-            idx     = np.argpartition(row_c, -k)[-k:]
-            idx     = idx[np.argsort(row_c[idx])[::-1]]
-            hard_negs[pid] = [str(pids[j]) for j in idx]
-            n_clinical += 1
-        else:
-            # Fallback: any non-normal patient
-            row_nn  = np.where(~is_normal, row, -3.0)
-            row_nn[np.where(pids == pid)[0]] = -3.0
-            k       = min(top_k, int((~is_normal).sum()) - 1)
-            if k > 0:
-                idx = np.argpartition(row_nn, -k)[-k:]
-                idx = idx[np.argsort(row_nn[idx])[::-1]]
-                hard_negs[pid] = [str(pids[j]) for j in idx]
-            else:
-                hard_negs[pid] = []
-
-    log(f"[HNM] Clinical HN: {n_clinical}/{(~is_normal).sum()} non-normal patients mined")
-    return hard_negs
-
-
-class HardNegBatchSampler(torch.utils.data.Sampler):
-    """
-    Balanced hard-negative sampler.
-
-    Every patient is used as an anchor once per epoch. After mining, each batch
-    uses n_anchor anchors and fills the remaining slots with clinical hard
-    negatives when available, then random fillers if needed. This prevents the
-    v5b failure mode where normal anchors caused whole batches to be skipped.
-    """
-    def __init__(self, dataset, batch_size: int, hn_frac: float = HN_FRAC, seed: int = SEED):
+    def __init__(self, dataset: StudyIUXrayDataset, batch_size: int, seed: int = SEED):
         self.pid_to_idx = {s["pid"]: i for i, s in enumerate(dataset.samples)}
-        self.all_pids   = [s["pid"] for s in dataset.samples]
-        self.bs         = batch_size
-        self.n_anchor   = max(1, int(batch_size * (1.0 - hn_frac)))
-        self.n_hn       = batch_size - self.n_anchor
-        self.hard_negs: dict = {}
-        self.seed       = seed
-        self.epoch      = 0
-
-    def update(self, hard_negs: dict) -> None:
-        self.hard_negs = hard_negs
-
-    def _chunk_size(self) -> int:
-        return self.n_anchor if self.hard_negs else self.bs
-
-    def max_batches_per_epoch(self) -> int:
-        return int(math.ceil(len(self.all_pids) / self.n_anchor))
+        self.all_pids = [s["pid"] for s in dataset.samples]
+        self.batch_size = batch_size
+        self.seed = seed
+        self.epoch = 0
 
     def __len__(self) -> int:
-        return int(math.ceil(len(self.all_pids) / self._chunk_size()))
+        return int(math.ceil(len(self.all_pids) / self.batch_size))
 
     def __iter__(self):
-        rng      = np.random.default_rng(self.seed + self.epoch)
+        rng = np.random.default_rng(self.seed + self.epoch)
         self.epoch += 1
         shuffled = rng.permutation(self.all_pids).tolist()
-        chunk_size = self._chunk_size()
 
-        for i in range(0, len(shuffled), chunk_size):
-            anchors = shuffled[i: i + chunk_size]
-            batch_pids = []
-            used = set()
+        for i in range(0, len(shuffled), self.batch_size):
+            batch_pids = list(shuffled[i: i + self.batch_size])
+            used = set(batch_pids)
 
-            for pid in anchors:
-                if pid in self.pid_to_idx and pid not in used:
-                    batch_pids.append(pid)
-                    used.add(pid)
-
-            if self.hard_negs and self.n_hn > 0:
-                anchor_order = rng.permutation(anchors).tolist()
-                for pid in anchor_order:
-                    if len(batch_pids) >= self.bs:
+            if len(batch_pids) < self.batch_size:
+                for pid in rng.permutation(self.all_pids).tolist():
+                    if len(batch_pids) >= self.batch_size:
                         break
-                    cands = [
-                        p for p in self.hard_negs.get(pid, [])[: self.n_hn * 4]
-                        if p in self.pid_to_idx and p not in used
-                    ]
-                    if cands:
-                        chosen = cands[int(rng.integers(0, len(cands)))]
-                        batch_pids.append(chosen)
-                        used.add(chosen)
-
-            if len(batch_pids) < self.bs:
-                filler_pool = rng.permutation(self.all_pids).tolist()
-                for pid in filler_pool:
-                    if len(batch_pids) >= self.bs:
-                        break
-                    if pid in self.pid_to_idx and pid not in used:
+                    if pid not in used:
                         batch_pids.append(pid)
                         used.add(pid)
 
-            if len(batch_pids) == self.bs:
+            if len(batch_pids) == self.batch_size:
                 yield [self.pid_to_idx[p] for p in batch_pids]
 
 
@@ -873,9 +676,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--cluster_start", type=int, default=CLUSTER_START)
-    parser.add_argument("--proto_start", type=int, default=PROTO_START)
-    parser.add_argument("--rank_start", type=int, default=RANK_START)
-    parser.add_argument("--rank_weight", type=float, default=RANK_WEIGHT)
     parser.add_argument("--aux_weight", type=float, default=AUX_WEIGHT)
     parser.add_argument("--clinical_start", type=int, default=CLINICAL_START)
     parser.add_argument("--clinical_weight", type=float, default=CLINICAL_WEIGHT)
@@ -890,11 +690,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clinical_best_min_strict", type=float, default=CLINICAL_BEST_MIN_STRICT)
     parser.add_argument("--balanced_clinical_weight", type=float, default=BALANCED_CLINICAL_WEIGHT)
     parser.add_argument("--min_strict_for_balanced", type=float, default=MIN_STRICT_FOR_BALANCED)
-    parser.add_argument("--rank_margin", type=float, default=RANK_MARGIN)
-    parser.add_argument("--rank_topk", type=int, default=RANK_TOPK)
-    parser.add_argument("--mine_every", type=int, default=MINE_EVERY)
-    parser.add_argument("--mine_start", type=int, default=MINE_START)
-    parser.add_argument("--mine_topk",  type=int, default=MINE_TOPK)
     parser.add_argument("--lr_head", type=float, default=LR_HEAD)
     parser.add_argument("--lr_enc", type=float, default=LR_ENC)
     parser.add_argument("--lr_text", type=float, default=LR_TEXT)
@@ -958,7 +753,6 @@ def main():
     log(f"Epochs       : {args.epochs}")
     log(f"Freeze ep    : {args.freeze_ep}")
     log(f"Cluster start: {args.cluster_start}")
-    log(f"Rank start   : {args.rank_start}")
     log(f"Clinical start: {args.clinical_start}")
     log(f"Clinical w   : {args.clinical_weight}")
     log(f"Clinical schedule: {args.use_clinical_schedule}")
@@ -970,20 +764,12 @@ def main():
             f"hold_end={args.clinical_hold_end}, mid_w={args.clinical_mid_weight}, "
             f"decay_end={args.clinical_decay_end}, final_w={args.clinical_final_weight}"
         )
-    log(f"Rank margin  : {args.rank_margin}")
-    log(f"Rank top-k   : {args.rank_topk}")
-    log(f"Proto start  : {args.proto_start}")
     log(f"Out dir      : {args.out_dir}")
 
     config = {k: v for k, v in vars(args).items()}
     config.update({
         "effective_batch": args.batch_size * args.grad_accum,
         "CLUSTER_START": args.cluster_start,
-        "PROTO_START": args.proto_start,
-        "RANK_START": args.rank_start,
-        "RANK_MARGIN": args.rank_margin,
-        "RANK_TOPK": args.rank_topk,
-        "RANK_WEIGHT": args.rank_weight,
         "AUX_WEIGHT": args.aux_weight,
         "CLINICAL_START": args.clinical_start,
         "CLINICAL_WEIGHT": args.clinical_weight,
@@ -999,7 +785,6 @@ def main():
         "BALANCED_CLINICAL_WEIGHT": args.balanced_clinical_weight,
         "MIN_STRICT_FOR_BALANCED": args.min_strict_for_balanced,
         "CLUSTER_ALPHA": CLUSTER_ALPHA,
-        "PROTO_WEIGHT": PROTO_WEIGHT,
         "LR_HEAD": args.lr_head,
         "LR_ENC": args.lr_enc,
         "LR_TEXT": args.lr_text,
@@ -1019,26 +804,18 @@ def main():
     test_ds = StudyIUXrayDataset(df_test, args.img_dir, base.get_val_transform(), train_mode=False)
     log(f"Train/val/test studies: {len(train_ds)} / {len(val_ds)} / {len(test_ds)}")
 
-    hn_sampler = HardNegBatchSampler(train_ds, args.batch_size, seed=args.seed)
+    study_sampler = StudyBatchSampler(train_ds, args.batch_size, seed=args.seed)
     train_loader = DataLoader(
         train_ds,
-        batch_sampler=hn_sampler,
+        batch_sampler=study_sampler,
         num_workers=args.num_workers,
         pin_memory=True,
         collate_fn=collate_study,
     )
-    log(f"Sampler batches before HNM: {len(train_loader)}")
-    log(f"Sampler batches after HNM : {hn_sampler.max_batches_per_epoch()}")
+    log(f"Study batches: {len(train_loader)}")
     config.update({
-        "sampler_batches_before_hnm": len(train_loader),
-        "sampler_batches_after_hnm": hn_sampler.max_batches_per_epoch(),
-        "hn_frac": HN_FRAC,
+        "study_batches": len(train_loader),
     })
-    mine_loader = DataLoader(           # full-pass loader for mining (no aug)
-        StudyIUXrayDataset(df_train, args.img_dir, base.get_val_transform(), train_mode=False),
-        batch_size=16, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True, collate_fn=collate_study,
-    )
     val_loader = DataLoader(
         val_ds,
         batch_size=16,
@@ -1060,14 +837,9 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(TEXT_MODEL)
     criterion = StudyLoss(
         cluster_start=args.cluster_start,
-        proto_start=args.proto_start,
-        rank_start=args.rank_start,
-        rank_weight=args.rank_weight,
         aux_weight=args.aux_weight,
         clinical_start=args.clinical_start,
         clinical_weight=args.clinical_weight,
-        rank_margin=args.rank_margin,
-        rank_topk=args.rank_topk,
     ).to(device)
     scaler = torch.amp.GradScaler("cuda")
 
@@ -1089,21 +861,6 @@ def main():
         json.dump(config, f, indent=2)
 
     for epoch in range(start_epoch, args.epochs + 1):
-        # ── Hard Negative Mining trigger ──────────────────────────────────
-        mine_ep = getattr(args, "mine_start", MINE_START)
-        mine_ev = getattr(args, "mine_every", MINE_EVERY)
-        if epoch >= mine_ep and (epoch - mine_ep) % mine_ev == 0:
-            log(f"[HNM] Mining hard negatives at epoch {epoch} ...")
-            t_mine = time.time()
-            hard_negs = mine_hard_negatives(
-                model, tokenizer, mine_loader, device, top_k=args.mine_topk
-            )
-            hn_sampler.update(hard_negs)
-            example = next((v for v in hard_negs.values() if v), [])
-            log(f"[HNM] Done in {time.time()-t_mine:.0f}s; "
-                f"active train batches now={len(train_loader)}; "
-                f"example top-3 HN={example[:3]}")
-
         if epoch == args.freeze_ep + 1:
             log(f"[PHASE 2] unfreeze at epoch {epoch}")
             for p in model.backbone_params():
@@ -1113,7 +870,7 @@ def main():
                 {"params": model.text_encoder.parameters(), "lr": args.lr_text},
                 {"params": model.head_params(), "lr": args.lr_head},
             ], weight_decay=WEIGHT_DECAY)
-            planned_batches = hn_sampler.max_batches_per_epoch()
+            planned_batches = len(train_loader)
             remain_steps = max(1, planned_batches * (args.epochs - args.freeze_ep) // args.grad_accum)
             warmup_steps = max(1, int(remain_steps * 0.05))
             sched = SequentialLR(opt, [
@@ -1126,7 +883,7 @@ def main():
         criterion.set_clinical_weight(active_clinical_weight)
         opt.zero_grad()
         t0 = time.time()
-        losses = {"total": [], "main": [], "proto": [], "rank": [], "aux": [], "clinical": []}
+        losses = {"total": [], "main": [], "aux": [], "clinical": []}
         n_batches = 0
         n_opt_steps = 0
         n_sched_steps = 0
@@ -1167,7 +924,7 @@ def main():
                     tok["attention_mask"],
                 )
                 logits = scale * (img_emb @ txt_emb.T)
-                loss, loss_main, loss_proto, loss_rank, loss_aux, loss_clinical = criterion(
+                loss, loss_main, loss_aux, loss_clinical = criterion(
                     logits=logits,
                     img_emb=img_emb,
                     txt_emb=txt_emb,
@@ -1185,8 +942,6 @@ def main():
 
             losses["total"].append(loss.item())
             losses["main"].append(loss_main.item())
-            losses["proto"].append(loss_proto.item())
-            losses["rank"].append(loss_rank.item())
             losses["aux"].append(loss_aux.item())
             losses["clinical"].append(loss_clinical.item())
 
@@ -1206,16 +961,14 @@ def main():
                     n_sched_steps += 1
 
         elapsed = time.time() - t0
-        phase = "Phase1" if epoch <= args.freeze_ep else "Phase2" if epoch < args.proto_start else "Phase3"
+        phase = "Phase1" if epoch <= args.freeze_ep else "Phase2"
         log(
             f"Ep[{epoch:03d}/{args.epochs}] {phase} "
             f"loss={np.mean(losses['total']):.4f} "
             f"(main={np.mean(losses['main']):.4f} "
-            f"rank={np.mean(losses['rank']):.4f} "
             f"clinical={np.mean(losses['clinical']):.4f} "
             f"clinical_w={active_clinical_weight:.4f} "
-            f"aux={np.mean(losses['aux']):.4f} "
-            f"proto={np.mean(losses['proto']):.4f}) "
+            f"aux={np.mean(losses['aux']):.4f}) "
             f"T={model.logit_scale.exp().item():.1f} "
             f"batches={n_batches} opt_steps={n_opt_steps} t={elapsed:.0f}s"
         )
@@ -1255,9 +1008,7 @@ def main():
                 "scheduler_steps": n_sched_steps,
                 "loss": float(np.mean(losses["total"])),
                 "loss_main": float(np.mean(losses["main"])),
-                "loss_rank": float(np.mean(losses["rank"])),
                 "loss_aux": float(np.mean(losses["aux"])),
-                "loss_proto": float(np.mean(losses["proto"])),
                 "loss_clinical": float(np.mean(losses["clinical"])),
                 "clinical_weight": active_clinical_weight,
                 "strict_r1": sr1,
@@ -1419,7 +1170,6 @@ def main():
                         f"mrr={mrr:.2f}",
                         f"batches={n_batches}",
                         f"opt_steps={n_opt_steps}",
-                        f"rank_loss={np.mean(losses['rank']):.4f}",
                         f"clinical_loss={np.mean(losses['clinical']):.4f}",
                         f"clinical_weight={active_clinical_weight:.4f}",
                         f"best_strict_r1={best_r1:.2f}",

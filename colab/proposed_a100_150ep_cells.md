@@ -211,10 +211,6 @@ args = [
     "--balanced_clinical_weight", "0.10",
     "--min_strict_for_balanced", "4.0",
     "--clinical_best_min_strict", "3.5",
-    "--rank_start", "999",
-    "--rank_weight", "0.0",
-    "--mine_start", "999",
-    "--mine_every", "999",
     "--num_workers", "4",
     "--seed", str(SEED),
 ]

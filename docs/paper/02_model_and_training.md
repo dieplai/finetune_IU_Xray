@@ -254,18 +254,20 @@ Kết quả thực tế xác nhận ý tưởng này:
 - Strict tăng mạnh lại ở epoch 70 và đạt best validation ở epoch 120.
 - Clinical-valid peak validation ở epoch 90.
 
-## 10. Các Thành Phần Có Trong Code Nhưng Không Bật Ở V8 Final
+## 10. Code Final Sau Khi Clean
 
-Để tránh viết sai trong paper, cần phân biệt rõ:
+Code paper-facing hiện chỉ giữ các thành phần đã được dùng trong run chính:
 
-| Component | Code có không? | V8 final có bật không? |
+| Component | Có trong code final | Dùng trong V8 final |
 |---|---:|---:|
-| DualPrototypeBank | Có | Không |
-| Prototype phase | Có | Không, vì `proto_start = 999` |
-| IntraClusterRankingLoss | Có | Không đáng kể, vì `rank_start = 999`, `rank_weight = 0.0` |
-| Hard Negative Mining | Có | Không, vì `mine_start = 999`, `mine_every = 999`, `hn_frac = 0.0` |
+| Study-level multi-view attention fusion | Có | Có |
+| Multi-positive InfoNCE warmup | Có | Có |
+| IDF-weighted Jaccard soft target | Có | Có |
+| Healthy Cluster | Có | Có |
+| Clinical supervised contrastive curriculum | Có | Có |
+| Auxiliary pathology/normal heads | Có | Có |
 
-Vì vậy paper v8 hiện tại không nên claim kết quả đến từ prototype bank hoặc hard negative mining. Có thể viết là các thành phần này là hướng mở rộng/ablation tương lai nếu chưa chạy thực nghiệm chính thức.
+Các nhánh thử nghiệm không dùng trong kết quả chính đã được loại khỏi code clean để tránh nhầm lẫn khi viết paper.
 
 ## 11. Training Setup V8 Chính
 
