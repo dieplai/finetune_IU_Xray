@@ -427,6 +427,8 @@ class StudyLoss(nn.Module):
         aux_weight: float = AUX_WEIGHT,
         clinical_start: int = CLINICAL_START,
         clinical_weight: float = CLINICAL_WEIGHT,
+        use_idf_jaccard: bool = True,
+        use_healthy_cluster: bool = True,
     ):
         super().__init__()
         self.cluster_start = cluster_start
@@ -436,6 +438,8 @@ class StudyLoss(nn.Module):
         self.base_loss = base.CombinedLoss(
             cluster_start=cluster_start,
             alpha=CLUSTER_ALPHA, temperature=CLUSTER_TEMP,
+            use_idf_jaccard=use_idf_jaccard,
+            use_healthy_cluster=use_healthy_cluster,
         )
         self.clinical_loss = ClinicalSupervisedContrastiveLoss()
         self.bce = nn.BCEWithLogitsLoss()
@@ -560,7 +564,7 @@ class StudyBatchSampler(torch.utils.data.Sampler):
 
 
 def mean_reciprocal_rank(sim_matrix: torch.Tensor, gt_mask: torch.Tensor) -> float:
-    """MRR (%) — study-level: 1 entry per patient, diagonal IS the ground truth."""
+    """MRR (%) for study-level retrieval; diagonal is the same-patient match."""
     rr = []
     for i in range(sim_matrix.shape[0]):
         gt = gt_mask[i]          # include diagonal: correct match = same patient
@@ -673,9 +677,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freeze_ep", type=int, default=FREEZE_EP)
     parser.add_argument("--eval_every", type=int, default=EVAL_EVERY)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--split_seed", type=int, default=SEED)
     parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
-    parser.add_argument("--resume", default=None)
+    parser.add_argument("--max_views", type=int, default=MAX_VIEWS)
     parser.add_argument("--cluster_start", type=int, default=CLUSTER_START)
+    parser.add_argument("--use_idf_jaccard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use_healthy_cluster", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--aux_weight", type=float, default=AUX_WEIGHT)
     parser.add_argument("--clinical_start", type=int, default=CLINICAL_START)
     parser.add_argument("--clinical_weight", type=float, default=CLINICAL_WEIGHT)
@@ -751,8 +758,13 @@ def main():
     log(f"Grad accum   : {args.grad_accum}")
     log(f"Eff batch    : {args.batch_size * args.grad_accum}")
     log(f"Epochs       : {args.epochs}")
+    log(f"Seed         : {args.seed}")
+    log(f"Split seed   : {args.split_seed}")
     log(f"Freeze ep    : {args.freeze_ep}")
+    log(f"Max views    : {args.max_views}")
     log(f"Cluster start: {args.cluster_start}")
+    log(f"IDF-Jaccard  : {args.use_idf_jaccard}")
+    log(f"Healthy clus.: {args.use_healthy_cluster}")
     log(f"Clinical start: {args.clinical_start}")
     log(f"Clinical w   : {args.clinical_weight}")
     log(f"Clinical schedule: {args.use_clinical_schedule}")
@@ -770,6 +782,10 @@ def main():
     config.update({
         "effective_batch": args.batch_size * args.grad_accum,
         "CLUSTER_START": args.cluster_start,
+        "MAX_VIEWS": args.max_views,
+        "SPLIT_SEED": args.split_seed,
+        "USE_IDF_JACCARD": args.use_idf_jaccard,
+        "USE_HEALTHY_CLUSTER": args.use_healthy_cluster,
         "AUX_WEIGHT": args.aux_weight,
         "CLINICAL_START": args.clinical_start,
         "CLINICAL_WEIGHT": args.clinical_weight,
@@ -792,16 +808,34 @@ def main():
 
     df = pd.read_csv(args.csv_path)
     df["patient_id"] = df["patient_id"].astype(str)
-    df_train = base.patient_split(df, "train", seed=args.seed)
-    df_val = base.patient_split(df, "val", seed=args.seed)
-    df_test = base.patient_split(df, "test", seed=args.seed)
+    df_train = base.patient_split(df, "train", seed=args.split_seed)
+    df_val = base.patient_split(df, "val", seed=args.split_seed)
+    df_test = base.patient_split(df, "test", seed=args.split_seed)
     log(f"Train rows/studies: {len(df_train)} / {df_train['patient_id'].nunique()}")
     log(f"Val rows/studies  : {len(df_val)} / {df_val['patient_id'].nunique()}")
     log(f"Test rows/studies : {len(df_test)} / {df_test['patient_id'].nunique()}")
 
-    train_ds = StudyIUXrayDataset(df_train, args.img_dir, base.get_train_transform(), train_mode=True)
-    val_ds = StudyIUXrayDataset(df_val, args.img_dir, base.get_val_transform(), train_mode=False)
-    test_ds = StudyIUXrayDataset(df_test, args.img_dir, base.get_val_transform(), train_mode=False)
+    train_ds = StudyIUXrayDataset(
+        df_train,
+        args.img_dir,
+        base.get_train_transform(),
+        train_mode=True,
+        max_views=args.max_views,
+    )
+    val_ds = StudyIUXrayDataset(
+        df_val,
+        args.img_dir,
+        base.get_val_transform(),
+        train_mode=False,
+        max_views=args.max_views,
+    )
+    test_ds = StudyIUXrayDataset(
+        df_test,
+        args.img_dir,
+        base.get_val_transform(),
+        train_mode=False,
+        max_views=args.max_views,
+    )
     log(f"Train/val/test studies: {len(train_ds)} / {len(val_ds)} / {len(test_ds)}")
 
     study_sampler = StudyBatchSampler(train_ds, args.batch_size, seed=args.seed)
@@ -840,6 +874,8 @@ def main():
         aux_weight=args.aux_weight,
         clinical_start=args.clinical_start,
         clinical_weight=args.clinical_weight,
+        use_idf_jaccard=args.use_idf_jaccard,
+        use_healthy_cluster=args.use_healthy_cluster,
     ).to(device)
     scaler = torch.amp.GradScaler("cuda")
 

@@ -68,10 +68,16 @@ def build_single_loader(manifest_csv: str, img_dir: str, num_workers: int):
     )
 
 
-def build_study_loader(manifest_csv: str, img_dir: str, num_workers: int):
+def build_study_loader(manifest_csv: str, img_dir: str, num_workers: int, max_views: int):
     df = pd.read_csv(manifest_csv)
     df["patient_id"] = df["patient_id"].astype(str)
-    ds = study.StudyIUXrayDataset(df, img_dir, single.get_val_transform(), train_mode=False)
+    ds = study.StudyIUXrayDataset(
+        df,
+        img_dir,
+        single.get_val_transform(),
+        train_mode=False,
+        max_views=max_views,
+    )
     return df, DataLoader(
         ds, batch_size=16, shuffle=False,
         num_workers=num_workers, pin_memory=True, collate_fn=study.collate_study,
@@ -143,8 +149,10 @@ def evaluate_checkpoint(adapter: str, ckpt_path: str, manifest_csv: str, img_dir
         si, st, ci, ct, sr1, cr1 = single.evaluate(model, loader, tokenizer, device)
     elif adapter == "study_swinbert":
         tokenizer = AutoTokenizer.from_pretrained(study.TEXT_MODEL)
-        _, loader = build_study_loader(manifest_csv, img_dir, num_workers)
         model, meta, missing, unexpected = load_study_model(ckpt_path, device)
+        ckpt_config = meta.get("config", {}) if isinstance(meta, dict) else {}
+        max_views = int(ckpt_config.get("MAX_VIEWS", ckpt_config.get("max_views", study.MAX_VIEWS)))
+        _, loader = build_study_loader(manifest_csv, img_dir, num_workers, max_views=max_views)
         metrics = study.evaluate_study(model, loader, tokenizer, device)
         if len(metrics) == 6:
             si, st, ci, ct, sr1, cr1 = metrics

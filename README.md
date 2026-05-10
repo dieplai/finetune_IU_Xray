@@ -121,17 +121,25 @@ Then copy the cells from `colab/proposed_a100_150ep_cells.md`.
 Run these after the proposed method to prove the contribution of each algorithmic component:
 
 ```bash
-python train_ablation.py strict_only --epochs 100 --batch_size 32 --grad_accum 4
-python train_ablation.py cluster_only --epochs 100 --batch_size 32 --grad_accum 4
-python train_ablation.py no_clinical_schedule --epochs 100 --batch_size 32 --grad_accum 4
+python train_ablation.py single_view_strict --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py study_multiview_strict --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py cluster_guided_basic --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py cluster_idf_jaccard --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py cluster_idf_healthy --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py clinical_constant --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py proposed --epochs 150 --batch_size 32 --grad_accum 4 --seed 42 --split_seed 42
+python train_ablation.py proposed --epochs 150 --batch_size 32 --grad_accum 4 --seed 123 --split_seed 42
 ```
 
 Presets:
 
-- `strict_only`: disables IDF-Jaccard, healthy cluster, and clinical loss.
-- `cluster_only`: keeps IDF-Jaccard + healthy cluster, disables clinical supervised contrastive.
-- `no_clinical_schedule`: keeps cluster and clinical loss but uses fixed clinical weight instead of curriculum.
-- `proposed`: full current proposed configuration.
+- `single_view_strict`: one-view strict InfoNCE baseline.
+- `study_multiview_strict`: study-level frontal/lateral fusion with strict InfoNCE only.
+- `cluster_guided_basic`: hard disease-overlap cluster positives, without IDF-Jaccard or Healthy Cluster.
+- `cluster_idf_jaccard`: adds IDF-weighted Jaccard soft targets, without Healthy Cluster.
+- `cluster_idf_healthy`: adds Healthy Cluster, without clinical supervised contrastive.
+- `clinical_constant`: adds fixed-weight clinical supervised contrastive, without curriculum.
+- `proposed`: full current proposed configuration with clinical curriculum.
 
 ## Evaluation
 

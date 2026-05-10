@@ -21,6 +21,7 @@ Main thesis statement:
 - `03_evaluation_and_results.md`: strict, cluster, clinical-valid metrics and current results.
 - `04_paper_writing_plan.md`: recommended paper structure, claims, limitations, tables, and figures.
 - `05_phase2_ablation_plan.md`: clean ablation plan for proving the contribution of each algorithmic component.
+- `06_code_paper_alignment.md`: direct mapping between paper claims, code files, ablation presets, metrics, and caveats.
 
 ## Current Main Checkpoint
 

@@ -1,6 +1,7 @@
 # Colab A100 Quickstart
 
-Use the single-zip workflow for the current proposed A100 curriculum training run.
+Use the single-zip workflow for either the current proposed A100 curriculum run
+or the full phase-2 ablation suite.
 
 ## Upload To Google Drive
 
@@ -38,6 +39,47 @@ The cells will:
 - train `train_proposed.py` for 150 epochs
 - auto-sync logs/checkpoints to Drive every 10 minutes
 - generate qualitative Image-to-Text and Text-to-Image reports after training
+
+## Phase-2 Paper Ablation Packages
+
+For the official paper ablation suite, use:
+
+```text
+colab/phase2_packages/
+```
+
+Each run folder is self-contained and contains:
+
+```text
+<RUN_ID>_bundle.zip
+<RUN_ID>_colab_cells.md
+README.md
+```
+
+Upload one run folder to:
+
+```text
+MyDrive/finetune_IU_Xray_phase2/<RUN_ID>/
+```
+
+Then copy cells from `<RUN_ID>_colab_cells.md` into Colab.
+
+The prepared 150-epoch runs are:
+
+- `R1_single_view_strict`
+- `R2_study_multiview_strict`
+- `R3_cluster_guided_basic`
+- `R4_cluster_idf_jaccard`
+- `R5_cluster_idf_healthy`
+- `R6_clinical_constant`
+- `R7_full_v8_seed42`
+- `R8_full_v8_seed123`
+
+Rebuild all phase-2 packages with:
+
+```bash
+python tools/make_phase2_colab_packages.py
+```
 
 ## Expected Outputs
 

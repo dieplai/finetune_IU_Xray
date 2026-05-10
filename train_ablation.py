@@ -16,6 +16,56 @@ import train_proposed
 
 PRESETS = {
     "proposed": [],
+    "single_view_strict": [
+        "--max_views", "1",
+        "--cluster_start", "999",
+        "--clinical_start", "999",
+        "--clinical_weight", "0.0",
+        "--no-use_clinical_schedule",
+    ],
+    "study_multiview_strict": [
+        "--max_views", "2",
+        "--cluster_start", "999",
+        "--clinical_start", "999",
+        "--clinical_weight", "0.0",
+        "--no-use_clinical_schedule",
+    ],
+    "cluster_guided_basic": [
+        "--max_views", "2",
+        "--cluster_start", "12",
+        "--clinical_start", "999",
+        "--clinical_weight", "0.0",
+        "--no-use_clinical_schedule",
+        "--no-use_idf_jaccard",
+        "--no-use_healthy_cluster",
+    ],
+    "cluster_idf_jaccard": [
+        "--max_views", "2",
+        "--cluster_start", "12",
+        "--clinical_start", "999",
+        "--clinical_weight", "0.0",
+        "--no-use_clinical_schedule",
+        "--use_idf_jaccard",
+        "--no-use_healthy_cluster",
+    ],
+    "cluster_idf_healthy": [
+        "--max_views", "2",
+        "--cluster_start", "12",
+        "--clinical_start", "999",
+        "--clinical_weight", "0.0",
+        "--no-use_clinical_schedule",
+        "--use_idf_jaccard",
+        "--use_healthy_cluster",
+    ],
+    "clinical_constant": [
+        "--max_views", "2",
+        "--cluster_start", "12",
+        "--clinical_start", "15",
+        "--clinical_weight", "0.12",
+        "--no-use_clinical_schedule",
+        "--use_idf_jaccard",
+        "--use_healthy_cluster",
+    ],
     "strict_only": [
         "--cluster_start", "999",
         "--clinical_start", "999",
@@ -45,9 +95,12 @@ def main() -> None:
         "preset",
         choices=sorted(PRESETS),
         help=(
-            "proposed=full current method; strict_only=no cluster/clinical; "
-            "cluster_only=IDF-Jaccard+healthy cluster only; "
-            "no_clinical_schedule=fixed clinical weight without curriculum"
+            "proposed=full current method; single_view_strict=one-view strict baseline; "
+            "study_multiview_strict=study fusion strict baseline; "
+            "cluster_guided_basic=hard disease-overlap positives; "
+            "cluster_idf_jaccard=adds IDF-Jaccard soft targets; "
+            "cluster_idf_healthy=adds Healthy Cluster; "
+            "clinical_constant=fixed clinical weight without curriculum"
         ),
     )
     parser.add_argument("--out_dir", default=None)
@@ -55,6 +108,7 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--grad_accum", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--split_seed", type=int, default=None)
     known, extra = parser.parse_known_args()
 
     forwarded = ["train_proposed.py", *PRESETS[known.preset]]
@@ -70,6 +124,8 @@ def main() -> None:
         forwarded += ["--grad_accum", str(known.grad_accum)]
     if known.seed is not None:
         forwarded += ["--seed", str(known.seed)]
+    if known.split_seed is not None:
+        forwarded += ["--split_seed", str(known.split_seed)]
     forwarded += extra
 
     sys.argv = forwarded

@@ -1,0 +1,64 @@
+{
+  "epochs": 150,
+  "batch_size": 32,
+  "grad_accum": 4,
+  "split_seed": 42,
+  "runs": [
+    {
+      "id": "R1_single_view_strict",
+      "preset": "single_view_strict",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Single-view strict InfoNCE baseline. Tests the weakest no-cluster setting."
+    },
+    {
+      "id": "R2_study_multiview_strict",
+      "preset": "study_multiview_strict",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Study-level frontal/lateral fusion with strict InfoNCE only."
+    },
+    {
+      "id": "R3_cluster_guided_basic",
+      "preset": "cluster_guided_basic",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Hard disease-overlap cluster positives, no IDF-Jaccard, no Healthy Cluster."
+    },
+    {
+      "id": "R4_cluster_idf_jaccard",
+      "preset": "cluster_idf_jaccard",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Adds IDF-weighted Jaccard soft disease similarity, without Healthy Cluster."
+    },
+    {
+      "id": "R5_cluster_idf_healthy",
+      "preset": "cluster_idf_healthy",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Adds Healthy Cluster to IDF-Jaccard cluster-guided learning."
+    },
+    {
+      "id": "R6_clinical_constant",
+      "preset": "clinical_constant",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Full cluster objective plus fixed clinical loss weight, no curriculum."
+    },
+    {
+      "id": "R7_full_v8_seed42",
+      "preset": "proposed",
+      "seed": 42,
+      "split_seed": 42,
+      "purpose": "Full proposed v8 method with clinical curriculum, seed 42."
+    },
+    {
+      "id": "R8_full_v8_seed123",
+      "preset": "proposed",
+      "seed": 123,
+      "split_seed": 42,
+      "purpose": "Full proposed v8 method with clinical curriculum, seed 123, fixed split seed 42."
+    }
+  ]
+}

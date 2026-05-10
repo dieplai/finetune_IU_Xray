@@ -49,18 +49,19 @@ def strip_module_prefix(state_dict):
     return {k[len("module."):]: v for k, v in state_dict.items()}
 
 
-def build_test_frame(csv_path: str, seed: int) -> pd.DataFrame:
+def build_test_frame(csv_path: str, split_seed: int) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     df["patient_id"] = df["patient_id"].astype(str)
-    return base.patient_split(df, "test", seed=seed).reset_index(drop=True)
+    return base.patient_split(df, "test", seed=split_seed).reset_index(drop=True)
 
 
-def build_loader(df_test: pd.DataFrame, img_dir: str, num_workers: int):
+def build_loader(df_test: pd.DataFrame, img_dir: str, num_workers: int, max_views: int):
     ds = study.StudyIUXrayDataset(
         df_test,
         img_dir,
         base.get_val_transform(),
         train_mode=False,
+        max_views=max_views,
     )
     loader = DataLoader(
         ds,
@@ -441,7 +442,24 @@ def main():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--csv-path", default=study.CSV_PATH)
     parser.add_argument("--img-dir", default=study.IMG_DIR)
-    parser.add_argument("--seed", type=int, default=study.SEED)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deprecated alias for --split-seed. Kept for backward compatibility.",
+    )
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=None,
+        help="Patient-level split seed. Defaults to checkpoint config SPLIT_SEED, then 42.",
+    )
+    parser.add_argument(
+        "--max-views",
+        type=int,
+        default=None,
+        help="Study image slots. Defaults to checkpoint config MAX_VIEWS, then 2.",
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--cases-per-bucket", type=int, default=5)
@@ -452,10 +470,24 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    df_test = build_test_frame(args.csv_path, args.seed)
-    ds, loader = build_loader(df_test, args.img_dir, args.num_workers)
     tokenizer = AutoTokenizer.from_pretrained(study.TEXT_MODEL)
     model, meta, missing, unexpected = load_model(args.checkpoint, device)
+    ckpt_config = meta.get("config", {}) if isinstance(meta, dict) else {}
+    split_seed = (
+        args.split_seed
+        if args.split_seed is not None
+        else args.seed
+        if args.seed is not None
+        else int(ckpt_config.get("SPLIT_SEED", ckpt_config.get("split_seed", study.SEED)))
+    )
+    max_views = (
+        args.max_views
+        if args.max_views is not None
+        else int(ckpt_config.get("MAX_VIEWS", ckpt_config.get("max_views", study.MAX_VIEWS)))
+    )
+
+    df_test = build_test_frame(args.csv_path, split_seed)
+    ds, loader = build_loader(df_test, args.img_dir, args.num_workers, max_views=max_views)
     embeddings = encode_dataset(model, loader, tokenizer, device)
 
     sim_i2t = embeddings["img_emb"] @ embeddings["txt_emb"].T
@@ -482,7 +514,8 @@ def main():
         "checkpoint": args.checkpoint,
         "csv_path": args.csv_path,
         "img_dir": args.img_dir,
-        "seed": args.seed,
+        "split_seed": split_seed,
+        "max_views": max_views,
         "test_studies": int(len(ds)),
         "meta": {
             "epoch": meta.get("epoch"),
@@ -509,6 +542,8 @@ def main():
         "html": str(html_path),
         "csv": str(csv_path),
         "test_studies": report["test_studies"],
+        "split_seed": split_seed,
+        "max_views": max_views,
         "strict_mean_r1": metrics["strict_mean_r1"],
         "clinical_valid_mean_r1": metrics["clinical_valid_mean_r1"],
         "cluster_mean_r1": metrics["cluster_mean_r1"],

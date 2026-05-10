@@ -5,10 +5,10 @@ train_single_gpu.py
 Single-GPU version of the Hierarchical Clustering-Guided Medical VLM.
 
 This file provides the shared baseline utilities used by train_proposed.py:
-  [C1] IDF-Weighted Jaccard Similarity   — rare diseases weighted more
-  [C2] Healthy Cluster                   — No Finding patients form a cluster
+  [C1] IDF-Weighted Jaccard Similarity   - rare diseases weighted more
+  [C2] Healthy Cluster                   - No Finding patients form a cluster
 
-Model: SwinV2-Base (384×384) + Bio_ClinicalBERT + MLP projection heads
+Model: SwinV2-Base (384x384) + Bio_ClinicalBERT + MLP projection heads
 Data : v8_clean.csv  (7,322 rows, 3,772 patients, 3,328 paired F+L)
        - 14 CheXpert columns as hard labels (No Finding inclusive)
        - projection: "Frontal" / "Lateral"
@@ -40,16 +40,16 @@ import torchvision.transforms as T
 from PIL import Image
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  PATHS  (edit to match your environment)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 CSV_PATH = "data/v8_clean.csv"
 IMG_DIR  = "data/images_384"
 OUT_DIR  = "outputs"
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  MODEL ARCHITECTURE
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 VISION_MODEL = "microsoft/swinv2-base-patch4-window12to24-192to384-22kto1k-ft"
 TEXT_MODEL   = "emilyalsentzer/Bio_ClinicalBERT"
 IMG_SIZE     = 384    # SwinV2-Base native resolution; do NOT change
@@ -57,15 +57,15 @@ EMBED_DIM    = 512    # joint embedding space dimension
 PROJ_HID_DIM = 1024   # projection head hidden dim
 DROPOUT      = 0.2
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  TRAINING HYPERPARAMETERS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # Memory note: 15 GB VRAM comfortably fits BS=4.
-# To match the 2-GPU (2×BS=4×GRAD_ACCUM=16 = effective 128) experiment:
-#   single GPU → BS=4, GRAD_ACCUM=32   (effective batch = 128)
+# To match the 2-GPU (2xBS=4xGRAD_ACCUM=16 = effective 128) experiment:
+#   single GPU -> BS=4, GRAD_ACCUM=32   (effective batch = 128)
 NUM_EPOCHS   = 150
 BATCH_SIZE   = 4      # per-step batch; increase only if VRAM allows
-GRAD_ACCUM   = 32     # effective batch = BATCH_SIZE × GRAD_ACCUM = 128
+GRAD_ACCUM   = 32     # effective batch = BATCH_SIZE x GRAD_ACCUM = 128
 FREEZE_EP    = 10     # epochs of heads-only warm-up before unfreezing encoders
 TEXT_MAX_LEN = 128
 NUM_WORKERS  = 4
@@ -78,16 +78,16 @@ LR_TEXT      = 1e-4   # Bio_ClinicalBERT (needs stronger adaptation than vision)
 WEIGHT_DECAY = 0.01
 MAX_GRAD     = 1.0    # gradient norm clipping
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  TASK 3: CLUSTERING-GUIDED LOSS  [C1][C2]
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 CLUSTER_START  = 11   # epoch to activate IDF-Jaccard clustering (after FREEZE_EP)
-CLUSTER_ALPHA  = 0.4  # blend: (1-α)·hard_label + α·idf_jaccard_soft
-CLUSTER_TEMP   = 1.0  # soft label temperature (higher → smoother boundaries)
+CLUSTER_ALPHA  = 0.4  # blend: (1-alpha)*hard_label + alpha*idf_jaccard_soft
+CLUSTER_TEMP   = 1.0  # soft label temperature (higher -> smoother boundaries)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  DATA SCHEMA
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 IMG_MEAN = (0.485, 0.456, 0.406)
 IMG_STD  = (0.229, 0.224, 0.225)
 
@@ -107,16 +107,16 @@ CHEXPERT_COLS = [
     "Pleural Effusion", "Pleural Other", "Fracture", "Support Devices",
 ]
 
-# IU-Xray training-set label frequencies → IDF weights for [C1]
+# IU-Xray training-set label frequencies -> IDF weights for [C1]
 _DISEASE_FREQ = [
     0.090, 0.138, 0.129, 0.025, 0.055, 0.022,
     0.100, 0.020, 0.057, 0.009, 0.018, 0.031,
 ]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  LOGGING
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 _log_file = None
 
 def log(msg: str) -> None:
@@ -128,9 +128,9 @@ def log(msg: str) -> None:
         _log_file.flush()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  DATA
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 def patient_split(
     df: pd.DataFrame,
     split: str,
@@ -163,7 +163,7 @@ def patient_split(
 def get_train_transform() -> T.Compose:
     """
     Standard augmentation pipeline for chest X-ray training.
-    Images are already 384×384 from preprocessing → no resize needed.
+    Images are already 384x384 from preprocessing -> no resize needed.
     """
     return T.Compose([
         # Avoid horizontal flips for chest X-rays: reports often mention left/right.
@@ -191,7 +191,7 @@ class IUXrayDataset(Dataset):
       caption : raw clinical report string (org_caption column)
       pid     : patient_id as string
       proj    : first character of projection ('f' for Frontal, 'l' for Lateral)
-      labels  : (14,) float tensor — full 14-dim CheXpert PATH_COLS labels
+      labels  : (14,) float tensor - full 14-dim CheXpert PATH_COLS labels
     """
 
     def __init__(self, df: pd.DataFrame, img_dir: str, transform: T.Compose):
@@ -226,17 +226,17 @@ def collate_fn(batch: list[dict]) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  MODEL
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class ProjectionHead(nn.Module):
     """
-    2-layer MLP projection head: in_dim → hid_dim → out_dim.
+    2-layer MLP projection head: in_dim -> hid_dim -> out_dim.
 
-    Architecture follows SimCLR/CLIP: Linear → BN → GELU → Dropout → Linear.
+    Architecture follows SimCLR/CLIP: Linear -> BN -> GELU -> Dropout -> Linear.
     Output is L2-normalized for cosine similarity computation.
-    Spatial: img_proj maps SwinV2 pooler_output (1024) → 512.
-             txt_proj maps BERT [CLS] token (768) → 512.
+    Spatial: img_proj maps SwinV2 pooler_output (1024) -> 512.
+             txt_proj maps BERT [CLS] token (768) -> 512.
     """
 
     def __init__(self, in_dim: int, hid_dim: int, out_dim: int, dropout: float = DROPOUT):
@@ -258,7 +258,7 @@ class MedicalSwinBERT(nn.Module):
     """
     Dual-encoder model for medical image-text retrieval.
 
-    Vision encoder : SwinV2-Base pretrained on ImageNet-22K at 384×384.
+    Vision encoder : SwinV2-Base pretrained on ImageNet-22K at 384x384.
                      Gradient checkpointing enabled to reduce activation memory.
     Text encoder   : Bio_ClinicalBERT pretrained on clinical notes (PubMed + MIMIC-III).
                      Gradient checkpointing enabled.
@@ -269,7 +269,7 @@ class MedicalSwinBERT(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # ── Vision encoder ─────────────────────────────────────────────────
+        # -- Vision encoder -------------------------------------------------
         self.image_encoder = AutoModel.from_pretrained(VISION_MODEL)
         # Gradient checkpointing: trades compute for memory.
         # use_reentrant=False: avoids interaction issues with custom autograd functions.
@@ -287,7 +287,7 @@ class MedicalSwinBERT(nn.Module):
             img_dim  = self.image_encoder(pixel_values=dummy).pooler_output.shape[-1]
         log(f"  SwinV2 pooler dim: {img_dim}")
 
-        # ── Text encoder ───────────────────────────────────────────────────
+        # -- Text encoder ---------------------------------------------------
         self.text_encoder = AutoModel.from_pretrained(TEXT_MODEL)
         try:
             self.text_encoder.gradient_checkpointing_enable(
@@ -299,21 +299,21 @@ class MedicalSwinBERT(nn.Module):
         txt_dim = self.text_encoder.config.hidden_size  # 768 for BERT-base
         log(f"  BERT hidden dim: {txt_dim}")
 
-        # ── Projection heads ───────────────────────────────────────────────
+        # -- Projection heads -----------------------------------------------
         self.img_proj = ProjectionHead(img_dim, PROJ_HID_DIM, EMBED_DIM)
         self.txt_proj = ProjectionHead(txt_dim, PROJ_HID_DIM, EMBED_DIM)
 
-        # ── Learnable temperature ──────────────────────────────────────────
-        # Initialized to CLIP default: exp(log(1/0.07)) ≈ 14.3
+        # -- Learnable temperature ------------------------------------------
+        # Initialized to CLIP default: exp(log(1/0.07)) approx 14.3
         self.logit_scale = nn.Parameter(torch.tensor(math.log(1.0 / 0.07)))
 
     def encode_image(self, images: torch.Tensor) -> torch.Tensor:
-        """Encode images → L2-normalized embeddings of shape (B, EMBED_DIM)."""
+        """Encode images -> L2-normalized embeddings of shape (B, EMBED_DIM)."""
         feat = self.image_encoder(pixel_values=images).pooler_output
         return self.img_proj(feat)
 
     def encode_text(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        """Encode tokenized text → L2-normalized embeddings of shape (B, EMBED_DIM)."""
+        """Encode tokenized text -> L2-normalized embeddings of shape (B, EMBED_DIM)."""
         cls = self.text_encoder(
             input_ids=input_ids, attention_mask=attention_mask
         ).last_hidden_state[:, 0, :]   # [CLS] token
@@ -351,20 +351,20 @@ class MedicalSwinBERT(nn.Module):
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 def labels_to_disease_vecs(labels: torch.Tensor) -> torch.Tensor:
     """
-    Convert 14-dim PATH_COLS labels → 12-dim CHEXPERT_COLS disease vectors.
+    Convert 14-dim PATH_COLS labels -> 12-dim CHEXPERT_COLS disease vectors.
 
     Merge step: Enlarged Cardiomediastinum (index 1) is merged into
     Cardiomegaly (index 2) via element-wise max, then column 1 is dropped.
-    No Finding (index 0) is excluded entirely — it is handled separately
+    No Finding (index 0) is excluded entirely - it is handled separately
     in [C2] as its own "healthy" cluster.
 
-    Input : labels (B, 14)  — full PATH_COLS order
-    Output: disease_vecs (B, 12) — CHEXPERT_COLS order
+    Input : labels (B, 14)  - full PATH_COLS order
+    Output: disease_vecs (B, 12) - CHEXPERT_COLS order
     """
     card_merged  = torch.maximum(labels[:, 1], labels[:, 2])   # (B,)
     disease_vecs = torch.cat(
@@ -385,9 +385,9 @@ def _idf_weights(device: torch.device) -> torch.Tensor:
     return idf / idf.sum()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  LOSS FUNCTIONS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 def build_positive_mask(patient_ids: list[str], device: torch.device) -> torch.Tensor:
     """
     Build boolean mask where mask[i, j] = True iff patient_ids[i] == patient_ids[j].
@@ -409,15 +409,15 @@ def idf_weighted_jaccard(dv: torch.Tensor, idf_w: torch.Tensor) -> torch.Tensor:
     """
     [C1] IDF-Weighted Jaccard similarity for binary disease label vectors.
 
-    J_w(A, B) = Σ_k w_k · (A_k AND B_k) / Σ_k w_k · (A_k OR B_k)
+    J_w(A, B) = sum_k w_k * (A_k AND B_k) / sum_k w_k * (A_k OR B_k)
 
     - A_k AND B_k (intersection): both patients have disease k
     - A_k OR  B_k (union)       : at least one patient has disease k
     - w_k = IDF weight (rare diseases contribute more)
 
-    Implementation trick: for binary vectors, (A·w)·(B·w) approximates
+    Implementation trick: for binary vectors, (A*w)*(B*w) approximates
     weighted intersection via sqrt(w) scaling:
-      inter = Σ_k w_k · A_k · B_k  via  (A·sqrt(w)) @ (B·sqrt(w))^T
+      inter = sum_k w_k * A_k * B_k  via  (A*sqrt(w)) @ (B*sqrt(w))^T
 
     Input:
       dv    : (B, 12) binary disease vectors (float)
@@ -426,10 +426,10 @@ def idf_weighted_jaccard(dv: torch.Tensor, idf_w: torch.Tensor) -> torch.Tensor:
       (B, B) similarity matrix in [0, 1]
     """
     sqrt_w = idf_w.sqrt()
-    inter  = (dv * sqrt_w) @ (dv * sqrt_w).T     # (B, B) — weighted intersection
-    a_sum  = (dv * idf_w).sum(-1)                 # (B,)   — weighted row sum
+    inter  = (dv * sqrt_w) @ (dv * sqrt_w).T     # (B, B) - weighted intersection
+    a_sum  = (dv * idf_w).sum(-1)                 # (B,)   - weighted row sum
     union  = a_sum.unsqueeze(1) + a_sum.unsqueeze(0) - inter
-    return inter / (union + 1e-8)                 # (B, B) ∈ [0.0, 1.0]
+    return inter / (union + 1e-8)                 # (B, B) in [0.0, 1.0]
 
 
 class MultiPositiveInfoNCE(nn.Module):
@@ -441,7 +441,7 @@ class MultiPositiveInfoNCE(nn.Module):
     of the same patient are both valid positives.
 
     Mathematical form:
-      L_i2t = -1/|P_i| Σ_{j ∈ P_i} log[ exp(l_ij) / Σ_k exp(l_ik) ]
+      L_i2t = -1/|P_i| sum_{j in P_i} log[ exp(l_ij) / sum_k exp(l_ik) ]
     where P_i = {j : patient_id[j] == patient_id[i]}.
     """
 
@@ -449,15 +449,36 @@ class MultiPositiveInfoNCE(nn.Module):
         device   = logits.device
         pos_mask = build_positive_mask(patient_ids, device).float()
 
-        # Image → text direction
+        # Image -> text direction
         n_pos_i = pos_mask.sum(-1).clamp(min=1)
         l_i2t   = -(pos_mask * F.log_softmax(logits, dim=-1)).sum(-1) / n_pos_i
 
-        # Text → image direction
+        # Text -> image direction
         n_pos_t = pos_mask.T.sum(-1).clamp(min=1)
         l_t2i   = -(pos_mask.T * F.log_softmax(logits.T, dim=-1)).sum(-1) / n_pos_t
 
         return (l_i2t.mean() + l_t2i.mean()) / 2
+
+
+def build_cluster_positive_mask(
+    patient_ids: list[str],
+    disease_vecs: torch.Tensor,
+    include_healthy_cluster: bool = True,
+) -> torch.Tensor:
+    """Build hard cluster positives for the basic clustering-guided ablation.
+
+    Positive pairs are same-patient pairs plus disease-overlap pairs. Healthy
+    both-normal pairs can be enabled separately so the Healthy Cluster
+    contribution can be ablated cleanly.
+    """
+    device = disease_vecs.device
+    dv = disease_vecs.float()
+    patient_mask = build_positive_mask(patient_ids, device)
+    overlap = (dv @ dv.T) > 0
+    if include_healthy_cluster:
+        is_normal = dv.sum(-1) == 0
+        overlap = overlap | (is_normal.unsqueeze(1) & is_normal.unsqueeze(0))
+    return patient_mask | overlap
 
 
 class HierarchicalClusterLoss(nn.Module):
@@ -465,7 +486,7 @@ class HierarchicalClusterLoss(nn.Module):
     [C1] + [C2]: IDF-Weighted Jaccard soft labels + Healthy cluster.
 
     Soft target = blend of hard same-patient label and IDF-Jaccard soft label:
-      target = (1 - α) · hard_label + α · idf_jaccard_soft
+      target = (1 - alpha) * hard_label + alpha * idf_jaccard_soft
 
     [C2] Healthy cluster: patients with no pathology (No Finding = 1, all
     disease dims = 0) are assigned mutual similarity of 0.4; they share clinical
@@ -476,10 +497,18 @@ class HierarchicalClusterLoss(nn.Module):
       temperature : softmax temperature for soft label smoothing
     """
 
-    def __init__(self, alpha: float = CLUSTER_ALPHA, temperature: float = CLUSTER_TEMP):
+    def __init__(
+        self,
+        alpha: float = CLUSTER_ALPHA,
+        temperature: float = CLUSTER_TEMP,
+        use_idf_jaccard: bool = True,
+        use_healthy_cluster: bool = True,
+    ):
         super().__init__()
-        self.alpha       = alpha
+        self.alpha = alpha
         self.temperature = temperature
+        self.use_idf_jaccard = use_idf_jaccard
+        self.use_healthy_cluster = use_healthy_cluster
 
     def forward(
         self,
@@ -490,19 +519,31 @@ class HierarchicalClusterLoss(nn.Module):
         device = logits.device
         dv     = disease_vecs.float()
 
-        # Hard positives: same patient_id (includes F/L paired views)
+        # Hard positives: same patient_id (includes study-level paired views)
         pos_mask = build_positive_mask(patient_ids, device).float()
         n_pos    = pos_mask.sum(-1, keepdim=True).clamp(min=1)
         hard     = pos_mask / n_pos          # normalized hard target
+
+        if not self.use_idf_jaccard:
+            cluster_mask = build_cluster_positive_mask(
+                patient_ids,
+                dv,
+                include_healthy_cluster=self.use_healthy_cluster,
+            ).float()
+            target = cluster_mask / cluster_mask.sum(-1, keepdim=True).clamp(min=1)
+            l_i2t = -(target   * F.log_softmax(logits,   dim=-1)).sum(-1).mean()
+            l_t2i = -(target.T * F.log_softmax(logits.T, dim=-1)).sum(-1).mean()
+            return (l_i2t + l_t2i) / 2
 
         # [C1] IDF-Weighted Jaccard soft similarity
         idf_w   = _idf_weights(device)
         sim_mat = idf_weighted_jaccard(dv, idf_w)
 
-        # [C2] Healthy Cluster: both-normal pairs get bonus similarity 0.4
-        is_normal   = (dv.sum(-1) == 0)                                    # (B,)
-        both_normal = (is_normal.unsqueeze(1) & is_normal.unsqueeze(0)).float()
-        sim_mat     = (sim_mat + both_normal * 0.4).clamp(max=1.0)
+        if self.use_healthy_cluster:
+            # [C2] Healthy Cluster: both-normal pairs get bonus similarity 0.4
+            is_normal   = (dv.sum(-1) == 0)                                # (B,)
+            both_normal = (is_normal.unsqueeze(1) & is_normal.unsqueeze(0)).float()
+            sim_mat     = (sim_mat + both_normal * 0.4).clamp(max=1.0)
 
         soft   = F.softmax(sim_mat / self.temperature, dim=-1)
         target = (1.0 - self.alpha) * hard + self.alpha * soft
@@ -517,11 +558,11 @@ class CombinedLoss(nn.Module):
     Two-stage loss schedule used by the proposed paper run:
 
     Phase 1 (epoch < cluster_start):
-      MultiPositiveInfoNCE — strict contrastive loss with multi-positive support.
+      MultiPositiveInfoNCE - strict contrastive loss with multi-positive support.
       Purpose: warm up projection heads before noisy soft labels are introduced.
 
-    Phase 2 (epoch ≥ cluster_start):
-      HierarchicalClusterLoss [C1][C2] — IDF-Jaccard soft labels + Healthy Cluster.
+    Phase 2 (epoch >= cluster_start):
+      HierarchicalClusterLoss [C1][C2] - IDF-Jaccard soft labels + Healthy Cluster.
       Purpose: encode disease similarity structure into the embedding space.
     """
 
@@ -530,11 +571,18 @@ class CombinedLoss(nn.Module):
         cluster_start: int  = CLUSTER_START,
         alpha: float        = CLUSTER_ALPHA,
         temperature: float  = CLUSTER_TEMP,
+        use_idf_jaccard: bool = True,
+        use_healthy_cluster: bool = True,
     ):
         super().__init__()
         self.cluster_start = cluster_start
         self.mp_loss       = MultiPositiveInfoNCE()
-        self.cluster_loss  = HierarchicalClusterLoss(alpha=alpha, temperature=temperature)
+        self.cluster_loss  = HierarchicalClusterLoss(
+            alpha=alpha,
+            temperature=temperature,
+            use_idf_jaccard=use_idf_jaccard,
+            use_healthy_cluster=use_healthy_cluster,
+        )
 
     def forward(
         self,
@@ -558,9 +606,9 @@ class CombinedLoss(nn.Module):
         return main_loss, main_loss
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  EVALUATION
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 def recall_at_k(
     sim: torch.Tensor,
     gt_mask: torch.Tensor,
@@ -574,7 +622,7 @@ def recall_at_k(
 
     Args:
       sim     : (N_queries, N_gallery) cosine similarity matrix
-      gt_mask : (N_queries, N_gallery) bool — True where sample is a positive
+      gt_mask : (N_queries, N_gallery) bool - True where sample is a positive
       ks      : tuple of K values to evaluate
     Returns:
       dict {"R@1": float, "R@5": float, "R@10": float} in percentage [0, 100]
@@ -598,10 +646,10 @@ def evaluate(
     """
     Full evaluation on a DataLoader. Returns recall metrics for two protocols:
 
-    STRICT  — ground truth = exact same patient_id (traditional retrieval)
-    CLUSTER — ground truth = any shared pathological label (clinically meaningful)
+    STRICT  - ground truth = exact same patient_id (traditional retrieval)
+    CLUSTER - ground truth = any shared pathological label (clinically meaningful)
 
-    Both i2t (image→text) and t2i (text→image) directions are evaluated.
+    Both i2t (image->text) and t2i (text->image) directions are evaluated.
 
     Returns:
       (strict_i2t, strict_t2i, cluster_i2t, cluster_t2i,
@@ -636,10 +684,10 @@ def evaluate(
     sim_i2t = ie @ te.T    # (N, N)
     sim_t2i = te @ ie.T    # (N, N)
 
-    # Ground truth 1 — STRICT: exact same patient_id
+    # Ground truth 1 - STRICT: exact same patient_id
     gt_strict = torch.from_numpy(pids[:, None] == pids[None, :])   # (N, N) bool
 
-    # Ground truth 2 — CLUSTER: any shared pathological finding.
+    # Ground truth 2 - CLUSTER: any shared pathological finding.
     # Use the same 12-dim merged disease representation as training.
     path = labels_to_disease_vecs(torch.tensor(labs, dtype=torch.float32))
     overlap     = (path @ path.T) > 0
@@ -667,20 +715,20 @@ def log_eval_results(
     cr1: float,
 ) -> None:
     """Pretty-print evaluation results."""
-    log(f"  [STRICT  — same patient]")
+    log(f"  [STRICT  - same patient]")
     log(f"  i2t | R@1={strict_i2t['R@1']:6.2f}%  R@5={strict_i2t['R@5']:6.2f}%  R@10={strict_i2t['R@10']:6.2f}%")
     log(f"  t2i | R@1={strict_t2i['R@1']:6.2f}%  R@5={strict_t2i['R@5']:6.2f}%  R@10={strict_t2i['R@10']:6.2f}%")
     log(f"  Mean Strict  R@1={sr1:.2f}%")
     log(f"")
-    log(f"  [CLUSTER — shared pathology]")
+    log(f"  [CLUSTER - shared pathology]")
     log(f"  i2t | R@1={cluster_i2t['R@1']:6.2f}%  R@5={cluster_i2t['R@5']:6.2f}%  R@10={cluster_i2t['R@10']:6.2f}%")
     log(f"  t2i | R@1={cluster_t2i['R@1']:6.2f}%  R@5={cluster_t2i['R@5']:6.2f}%  R@10={cluster_t2i['R@10']:6.2f}%")
     log(f"  Mean Cluster R@1={cr1:.2f}%")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  TRAINING
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Single-GPU training for Medical Image-Text Retrieval"
@@ -747,7 +795,7 @@ def main() -> None:
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
 
-    # ── Data ──────────────────────────────────────────────────────────────────
+    # -- Data ------------------------------------------------------------------
     log("\n[DATA]")
     df = pd.read_csv(args.csv_path)
     df["patient_id"] = df["patient_id"].astype(str)
@@ -789,7 +837,7 @@ def main() -> None:
         num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn,
     )
 
-    # ── Model ─────────────────────────────────────────────────────────────────
+    # -- Model -----------------------------------------------------------------
     log("\n[MODEL]")
     model     = MedicalSwinBERT().to(device)
     tokenizer = AutoTokenizer.from_pretrained(TEXT_MODEL)
@@ -797,7 +845,7 @@ def main() -> None:
     n_total = sum(p.numel() for p in model.parameters()) / 1e6
     log(f"  Total params  : {n_total:.1f}M")
 
-    # ── Loss ──────────────────────────────────────────────────────────────────
+    # -- Loss ------------------------------------------------------------------
     criterion = CombinedLoss(cluster_start=CLUSTER_START).to(device)
     log(f"\n[LOSS] cluster_start={CLUSTER_START}")
     log(f"       alpha={CLUSTER_ALPHA} | temp={CLUSTER_TEMP}")
@@ -805,13 +853,13 @@ def main() -> None:
     # AMP scaler
     scaler = torch.amp.GradScaler("cuda")
 
-    # ── Phase 1: Freeze encoders ───────────────────────────────────────────────
+    # -- Phase 1: Freeze encoders -----------------------------------------------
     log(f"\n[PHASE 1] Freeze encoders for {args.freeze_ep} epochs (heads-only warm-up)")
     for p in model.backbone_params():
         p.requires_grad = False
     opt = AdamW(model.head_params(), lr=LR_HEAD, weight_decay=WEIGHT_DECAY)
 
-    # ── Resume from checkpoint ─────────────────────────────────────────────────
+    # -- Resume from checkpoint -------------------------------------------------
     start_epoch = 1
     best_r1     = 0.0
     best_epoch  = 0
@@ -846,12 +894,12 @@ def main() -> None:
 
     log("\n" + "=" * 65)
     log(f"  TRAINING: {args.epochs} epochs  (start={start_epoch})")
-    log(f"  Effective batch = {args.batch_size} × {args.grad_accum} = {args.batch_size * args.grad_accum}")
+    log(f"  Effective batch = {args.batch_size} x {args.grad_accum} = {args.batch_size * args.grad_accum}")
     log("=" * 65)
 
     for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
-        # ── Phase 2: Unfreeze encoders ─────────────────────────────────────
+        # -- Phase 2: Unfreeze encoders -------------------------------------
         if epoch == args.freeze_ep + 1:
             log(f"\n[PHASE 2] Unfreeze encoders at epoch {epoch}")
             torch.cuda.empty_cache()
@@ -869,9 +917,9 @@ def main() -> None:
                 CosineAnnealingLR(opt, T_max=remain_steps - warmup_steps, eta_min=1e-8),
             ], milestones=[warmup_steps])
             log(f"  LR: enc={LR_ENC:.0e}  text={LR_TEXT:.0e}  head={LR_HEAD:.0e}")
-            log(f"  Warmup {warmup_steps} steps → CosineAnnealing ({remain_steps - warmup_steps} steps)")
+            log(f"  Warmup {warmup_steps} steps -> CosineAnnealing ({remain_steps - warmup_steps} steps)")
 
-        # ── Training Loop ─────────────────────────────────────────────────
+        # -- Training Loop -------------------------------------------------
         model.train()
         L_total, L_main = [], []
         opt.zero_grad()
@@ -893,7 +941,7 @@ def main() -> None:
             with torch.amp.autocast("cuda"):
                 img_emb, txt_emb, scale = model(imgs, tok["input_ids"], tok["attention_mask"])
 
-                # Convert labels: 14-dim PATH_COLS → 12-dim CHEXPERT_COLS
+                # Convert labels: 14-dim PATH_COLS -> 12-dim CHEXPERT_COLS
                 disease_vecs = labels_to_disease_vecs(labels)
 
                 # [C1][C2]: IDF-Jaccard + Healthy Cluster loss
@@ -932,7 +980,7 @@ def main() -> None:
             f"T={temp:.1f}  t={elapsed:.0f}s"
         )
 
-        # ── Evaluation ────────────────────────────────────────────────────
+        # -- Evaluation ----------------------------------------------------
         do_eval = (
             epoch % args.eval_every == 0
             or epoch == args.epochs
@@ -1056,7 +1104,7 @@ def main() -> None:
                 )
                 log(f"  Saved checkpoint ckpt_ep{epoch:03d}.pt")
 
-    # ── Final Test Evaluation ────────────────────────────────────────────────
+    # -- Final Test Evaluation ------------------------------------------------
     log("\n" + "=" * 55)
     log("  FINAL TEST EVALUATION")
     log("=" * 55)
@@ -1067,7 +1115,7 @@ def main() -> None:
         model.load_state_dict(ckpt["model"])
         log(f"Loaded best checkpoint (ep{ckpt['epoch']}, val Strict R@1={ckpt['best_r1']:.2f}%)")
     else:
-        log("WARNING: No best.pt found — evaluating current model weights.")
+        log("WARNING: No best.pt found - evaluating current model weights.")
 
     si, st, ci, ct, sr1, cr1 = evaluate(model, test_loader, tokenizer, device)
     log("\n  [TEST RESULTS]")
@@ -1138,8 +1186,8 @@ def main() -> None:
         _log_file.close()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 #  ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 if __name__ == "__main__":
     main()
