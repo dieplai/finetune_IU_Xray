@@ -111,7 +111,7 @@ def plot_pca_biplot(features, labels, label_names, title, filename):
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Clinical Condition")
     
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, filename), dpi=300)
+    plt.savefig(filename, dpi=300)
     plt.close()
 
 def plot_dimensionality_reduction(features, labels, label_names, method='tsne', dims=2, title="", filename=""):
@@ -160,43 +160,52 @@ def plot_dimensionality_reduction(features, labels, label_names, method='tsne', 
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Clinical Condition")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, filename), dpi=300)
+    plt.savefig(filename, dpi=300)
     plt.close()
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualize latent space of IU-Xray model")
+    parser.add_argument("--checkpoint", default=CHECKPOINT_PATH, help="Path to .pt model")
+    parser.add_argument("--csv_path", default=tp.CSV_PATH, help="Path to dataset CSV")
+    parser.add_argument("--img_dir", default=tp.IMG_DIR, help="Path to image directory")
+    parser.add_argument("--out_dir", default=OUTPUT_DIR, help="Output directory for plots")
+    parser.add_argument("--num_samples", type=int, default=800, help="Number of samples to visualize")
+    return parser.parse_args()
+
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    args = parse_args()
+    os.makedirs(args.out_dir, exist_ok=True)
     
     # 1. Setup Data
     print("[*] Preparing dataset and dataloader...")
-    if not os.path.exists(tp.CSV_PATH):
-        print(f"[!] Error: CSV file not found at {tp.CSV_PATH}")
-        print("Please ensure the dataset is placed correctly in the 'data/' folder.")
+    if not os.path.exists(args.csv_path):
+        print(f"[!] Error: CSV file not found at {args.csv_path}")
         return
 
-    df = pd.read_csv(tp.CSV_PATH)
+    df = pd.read_csv(args.csv_path)
     transform = get_val_transform(tp.IMG_SIZE)
     
-    # Use StudyIUXrayDataset from train_proposed to group by study
     dataset = tp.StudyIUXrayDataset(
         df=df, 
-        img_dir=tp.IMG_DIR,
+        img_dir=args.img_dir,
         transform=transform,
         train_mode=False
     )
     
-    # Take a representative subset for visualization (e.g., 800 samples)
-    num_samples = min(len(dataset), 800)
+    num_samples = min(len(dataset), args.num_samples)
     indices = np.random.choice(len(dataset), num_samples, replace=False)
     subset_dataset = torch.utils.data.Subset(dataset, indices)
         
     loader = DataLoader(subset_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=tp.collate_study)
     
     # 2. Load Model
-    if not os.path.exists(CHECKPOINT_PATH):
-        print(f"[!] Error: Checkpoint not found at {CHECKPOINT_PATH}")
+    if not os.path.exists(args.checkpoint):
+        print(f"[!] Error: Checkpoint not found at {args.checkpoint}")
         return
         
-    model = load_model(CHECKPOINT_PATH)
+    model = load_model(args.checkpoint)
     
     # 3. Extract Features
     img_embs, txt_embs, labels = get_features(model, loader)
@@ -208,22 +217,22 @@ def main():
     print("="*30)
     
     # PCA
-    plot_pca_biplot(img_embs, labels, label_names, "PCA Analysis - Image Embeddings", "pca_img_2d.png")
-    plot_pca_biplot(txt_embs, labels, label_names, "PCA Analysis - Text Embeddings", "pca_txt_2d.png")
+    plot_pca_biplot(img_embs, labels, label_names, "PCA Analysis - Image Embeddings", os.path.join(args.out_dir, "pca_img_2d.png"))
+    plot_pca_biplot(txt_embs, labels, label_names, "PCA Analysis - Text Embeddings", os.path.join(args.out_dir, "pca_txt_2d.png"))
     
     # t-SNE (2D & 3D)
     plot_dimensionality_reduction(img_embs, labels, label_names, method='tsne', dims=2, 
-                                  title="t-SNE Visualization (2D) - Image Latent Space", filename="tsne_img_2d.png")
+                                  title="t-SNE Visualization (2D) - Image Latent Space", filename=os.path.join(args.out_dir, "tsne_img_2d.png"))
     plot_dimensionality_reduction(img_embs, labels, label_names, method='tsne', dims=3, 
-                                  title="t-SNE Visualization (3D) - Image Latent Space", filename="tsne_img_3d.png")
+                                  title="t-SNE Visualization (3D) - Image Latent Space", filename=os.path.join(args.out_dir, "tsne_img_3d.png"))
     
     # UMAP (2D & 3D)
     plot_dimensionality_reduction(img_embs, labels, label_names, method='umap', dims=2, 
-                                  title="UMAP Visualization (2D) - Image Latent Space", filename="umap_img_2d.png")
+                                  title="UMAP Visualization (2D) - Image Latent Space", filename=os.path.join(args.out_dir, "umap_img_2d.png"))
     plot_dimensionality_reduction(img_embs, labels, label_names, method='umap', dims=3, 
-                                  title="UMAP Visualization (3D) - Image Latent Space", filename="umap_img_3d.png")
+                                  title="UMAP Visualization (3D) - Image Latent Space", filename=os.path.join(args.out_dir, "umap_img_3d.png"))
     
-    print("\n[✔] Success! All plots saved to the 'plot/' directory.")
+    print(f"\n[✔] Success! All plots saved to: {args.out_dir}")
 
 if __name__ == "__main__":
     main()
