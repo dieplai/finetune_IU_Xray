@@ -61,6 +61,19 @@ def extract_labels_from_mesh(mesh_str: str, problems_str: str) -> np.ndarray:
             vec[tp.PATH_COLS.index('Normal')] = 1.0
     return vec
 
+def build_label_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply extract_labels_from_mesh to the whole reports dataframe and return
+    a dataframe with uid + one binary column per tp.PATH_COLS entry.
+    """
+    rows = df.apply(
+        lambda r: extract_labels_from_mesh(r.get('MeSH', ''), r.get('Problems', '')),
+        axis=1,
+    )
+    label_df = pd.DataFrame(rows.tolist(), columns=tp.PATH_COLS)
+    label_df.insert(0, 'uid', df['uid'].values)
+    return label_df
+
 def get_primary_label(labels: np.ndarray, label_names) -> str:
     """Return the primary condition for a multi-label vector (simplified: pick first positive)"""
     pos = np.where(labels > 0.5)[0]
@@ -345,11 +358,11 @@ def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # 1. Load data and build ground truth labels (as in your original code)
+    # 1. Load data and build ground truth labels
     print("[*] Loading IU X-ray CSVs...")
     reports_df = pd.read_csv(args.reports_csv)
-    # Build label dataframe using your function
-    label_df = tp.build_label_dataframe(reports_df)  # Assuming this function exists in train_proposed
+    # Build label dataframe using our local function
+    label_df = build_label_dataframe(reports_df)
     # If not, use the one defined here (but note: need to replicate)
     # We'll use the function we defined above
     # Actually, your original code had 'build_label_dataframe' inside the script; we'll use that.
