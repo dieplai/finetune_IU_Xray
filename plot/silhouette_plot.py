@@ -331,16 +331,27 @@ def main():
     # 4. Extract embeddings ────────────────────────────────────────────────────
     embeddings, labels = extract_embeddings(model, dataset, args.num_samples)
 
-    # 5. Convert clinical labels → numeric cluster IDs ─────────────────────────
-    # This measures: "Does the embedding space separate clinical conditions?"
+    # 5. Filter out 'No Finding' (Normal) — focus ONLY on pathologies ──────────
+    labels_np = np.array(labels)
+    pathology_mask = labels_np != "No Finding"
+    
+    if pathology_mask.sum() < 10:
+        print("[!] Too few pathology samples found. Keeping all samples.")
+    else:
+        print(f"[*] Removing 'No Finding' group. Pathology samples: {pathology_mask.sum()}")
+        embeddings = embeddings[pathology_mask]
+        labels     = labels_np[pathology_mask].tolist()
+
+    # 6. Convert clinical labels → numeric cluster IDs ─────────────────────────
     unique_labels = sorted(set(labels))
     label_to_id   = {l: i for i, l in enumerate(unique_labels)}
     cluster_ids   = np.array([label_to_id[l] for l in labels])
+    
     print(f"[*] Using {len(unique_labels)} clinical groups as clusters:")
     for l, i in label_to_id.items():
         print(f"    [{i}] {l}: {(cluster_ids == i).sum()} samples")
 
-    # 6. Draw Silhouette Plot ──────────────────────────────────────────────────
+    # 7. Draw Silhouette Plot ──────────────────────────────────────────────────
     save_path = os.path.join(args.out_dir, "silhouette_plot.png")
     plot_silhouette(embeddings, cluster_ids, labels, save_path)
 
