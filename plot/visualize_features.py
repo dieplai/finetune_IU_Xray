@@ -225,9 +225,10 @@ def main():
         if col not in df.columns:
             df[col] = 0 # Default to 0 if label not present
 
+    print(f"[*] Visualizing with fixed image size: 384x384")
     from torchvision import transforms as T
     transform = T.Compose([
-        T.Resize((tp.IMG_SIZE, tp.IMG_SIZE)),
+        T.Resize((384, 384), interpolation=T.InterpolationMode.BICUBIC),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
