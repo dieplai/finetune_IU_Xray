@@ -118,143 +118,148 @@ def load_model(checkpoint_path: str):
 
 # ── feature extraction ────────────────────────────────────────────────────────
 def extract_embeddings(model, dataset, num_samples: int):
-    """Extract image embeddings and cluster assignments from the model."""
+    """Extract image embeddings from the model."""
     indices = np.random.choice(len(dataset), min(num_samples, len(dataset)), replace=False)
     subset  = Subset(dataset, indices)
 
     tokenizer = AutoTokenizer.from_pretrained(tp.TEXT_MODEL)
 
     def collate(batch):
-        images   = torch.stack([b["image"] for b in batch])
-        captions = [b["caption"] for b in batch]
-        labels   = [b["label"] for b in batch]
-        return images, captions, labels
+        return (
+            torch.stack([b["image"] for b in batch]),
+            [b["caption"] for b in batch],
+            [b["label"] for b in batch],
+        )
 
     loader = DataLoader(subset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate)
-
-    all_embs, all_labels, all_clusters = [], [], []
+    all_embs, all_labels = [], []
 
     with torch.no_grad():
         for images, captions, labels in tqdm(loader, desc="[*] Extracting embeddings"):
-            images = images.to(DEVICE)
-
-            # dummy view_mask / view_type_ids for single-view input
             B = images.size(0)
-            view_mask     = torch.ones(B, 1, dtype=torch.bool, device=DEVICE)
+            images        = images.unsqueeze(1).to(DEVICE)   # (B,1,C,H,W)
+            view_mask     = torch.ones(B, 1, dtype=torch.bool,  device=DEVICE)
             view_type_ids = torch.zeros(B, 1, dtype=torch.long, device=DEVICE)
-            # add fake view dimension: (B,1,C,H,W)
-            images = images.unsqueeze(1)
 
             tok = tokenizer(
-                captions,
-                padding="max_length",
-                truncation=True,
-                max_length=tp.TEXT_MAX_LEN,
-                return_tensors="pt",
+                captions, padding="max_length", truncation=True,
+                max_length=tp.TEXT_MAX_LEN, return_tensors="pt",
             ).to(DEVICE)
 
-            # forward – returns: img_feat, txt_feat, sim_it, sim_ti,
-            #                    logits_i, logits_t, cluster_logits, scale, cluster_probs
-            outputs = model(
+            img_feat = model(
                 images, view_mask, view_type_ids,
                 tok["input_ids"], tok["attention_mask"],
-            )
-            img_feat      = outputs[0]  # (B, D)
-            cluster_probs = outputs[8]  # (B, K)
+            )[0]  # Take img_features (index 0)
 
             all_embs.append(img_feat.cpu().numpy())
             all_labels.extend(labels)
-            all_clusters.append(cluster_probs.argmax(dim=-1).cpu().numpy())
 
-    embeddings    = np.concatenate(all_embs, axis=0)
-    cluster_ids   = np.concatenate(all_clusters, axis=0)
-    return embeddings, all_labels, cluster_ids
+    embeddings = np.concatenate(all_embs, axis=0)
+    return embeddings, all_labels
 
 
 # ── Silhouette Plot ───────────────────────────────────────────────────────────
 def plot_silhouette(embeddings, cluster_ids, condition_labels, save_path: str):
     """
-    Draw a Silhouette Plot where:
-      - each horizontal bar = one sample
-      - bars are grouped by cluster (K-prototype assignment from model)
-      - bar color = clinical condition (from MeSH)
-      - red dashed line = average silhouette score
+    Draw a Silhouette Plot grouped by active model prototypes.
+    Empty clusters (n=0 or n=1) are automatically filtered out.
     """
-    n_clusters = int(cluster_ids.max()) + 1
-    unique_conditions = sorted(set(condition_labels))
-    cond_to_color = {c: plt.cm.tab20(i / len(unique_conditions))
+    from collections import Counter
+
+    # ── Filter: keep only clusters with >= 2 samples ─────────────────────────
+    counts = Counter(cluster_ids)
+    active_clusters = sorted([k for k, v in counts.items() if v >= 2])
+    
+    if len(active_clusters) < 2:
+        print("[!] Not enough active clusters for silhouette analysis.")
+        print(f"    Active clusters: {active_clusters}")
+        return
+    
+    # Keep only samples from active clusters
+    active_mask = np.array([c in active_clusters for c in cluster_ids])
+    emb_active  = embeddings[active_mask]
+    ids_active  = cluster_ids[active_mask]
+    cond_active = [condition_labels[i] for i, m in enumerate(active_mask) if m]
+    
+    # Re-map cluster IDs to contiguous 0, 1, 2, ...
+    remap = {old: new for new, old in enumerate(active_clusters)}
+    ids_remapped = np.array([remap[c] for c in ids_active])
+    n_clusters = len(active_clusters)
+    
+    print(f"[*] Active clusters: {n_clusters} / {int(cluster_ids.max())+1} total prototypes")
+    print(f"[*] Samples in active clusters: {len(emb_active)} / {len(embeddings)}")
+    print(f"    Cluster sizes: {dict(Counter(ids_remapped))}")
+    
+    unique_conditions = sorted(set(cond_active))
+    cond_to_color = {c: plt.cm.tab20(i / max(len(unique_conditions), 1))
                      for i, c in enumerate(unique_conditions)}
 
-    print(f"[*] Computing silhouette scores for {len(embeddings)} samples, "
-          f"{n_clusters} clusters ...")
-    
-    # Normalize embeddings to unit sphere → cosine distance = Euclidean distance on unit sphere
-    # This is the correct metric for contrastive learning embeddings
-    emb_norm = normalize(embeddings, norm='l2')
-    
-    # Optional: reduce to 64 dims with PCA to reduce noise in high-dim space
+    # ── Silhouette computation with cosine metric ─────────────────────────────
+    emb_norm = normalize(emb_active, norm='l2')
     if emb_norm.shape[1] > 64:
-        print(f"[*] Reducing from {emb_norm.shape[1]} → 64 dims with PCA ...")
+        print(f"[*] PCA: {emb_norm.shape[1]} → 64 dims ...")
         pca = PCA(n_components=64, random_state=42)
         emb_norm = pca.fit_transform(emb_norm)
-    
-    sil_vals   = silhouette_samples(emb_norm, cluster_ids, metric='cosine')
-    sil_avg    = silhouette_score(emb_norm, cluster_ids, metric='cosine')
+
+    sil_vals = silhouette_samples(emb_norm, ids_remapped, metric='cosine')
+    sil_avg  = silhouette_score(emb_norm, ids_remapped, metric='cosine')
     print(f"[*] Average Silhouette Score (cosine): {sil_avg:.4f}")
 
-    fig, ax = plt.subplots(figsize=(12, max(8, n_clusters * 1.2)))
+    # ── Plot ──────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(12, max(6, n_clusters * 1.5)))
     y_lower = 10
 
     for k in range(n_clusters):
-        mask = cluster_ids == k
+        mask      = ids_remapped == k
         ith_vals  = sil_vals[mask]
-        ith_conds = [condition_labels[i] for i, m in enumerate(mask) if m]
+        ith_conds = [cond_active[i] for i, m in enumerate(mask) if m]
 
-        # sort by value descending for prettier bars
-        order = np.argsort(ith_vals)[::-1]
+        order     = np.argsort(ith_vals)[::-1]
         ith_vals  = ith_vals[order]
         ith_conds = [ith_conds[i] for i in order]
 
         size    = len(ith_vals)
         y_upper = y_lower + size
 
-        # colour each bar by clinical condition
-        bar_colors = [cond_to_color[c] for c in ith_conds]
-        for j, (val, col) in enumerate(zip(ith_vals, bar_colors)):
+        for j, (val, cond) in enumerate(zip(ith_vals, ith_conds)):
             ax.barh(y_lower + j, val, height=1.0,
-                    color=col, edgecolor="none", alpha=0.85)
+                    color=cond_to_color[cond], edgecolor="none", alpha=0.85)
 
+        orig_id = active_clusters[k]
         ax.text(-0.06, y_lower + size / 2,
-                f"Cluster {k}\n(n={size})",
+                f"Cluster {orig_id}\n(n={size})",
                 ha="right", va="center", fontsize=9, fontweight="bold")
 
         y_lower = y_upper + 8
 
     # Average score line
     ax.axvline(x=sil_avg, color="crimson", linestyle="--", linewidth=1.8,
-               label=f"Avg score = {sil_avg:.3f}")
+               label=f"Avg = {sil_avg:.3f}")
 
     # Legend for conditions
     legend_patches = [
         plt.Rectangle((0, 0), 1, 1, color=cond_to_color[c], label=c)
         for c in unique_conditions
     ]
-    ax.legend(handles=legend_patches + [
-        plt.Line2D([0], [0], color="crimson", linestyle="--",
-                   linewidth=1.8, label=f"Avg = {sil_avg:.3f}")
-    ], loc="lower right", fontsize=9, framealpha=0.9, ncol=2)
+    ax.legend(
+        handles=legend_patches + [
+            plt.Line2D([0], [0], color="crimson", linestyle="--",
+                       linewidth=1.8, label=f"Avg (cosine) = {sil_avg:.3f}")
+        ],
+        loc="lower right", fontsize=9, framealpha=0.9, ncol=2,
+    )
 
-    ax.set_xlim(-0.25, 1.0)
-    ax.set_xlabel("Silhouette Coefficient", fontsize=13)
-    ax.set_ylabel("")
+    ax.set_xlim(-0.5, 1.0)
+    ax.set_xlabel("Silhouette Coefficient (cosine)", fontsize=13)
     ax.set_yticks([])
     ax.set_title(
         f"Silhouette Analysis — Image Latent Space\n"
-        f"Model Prototypes: {n_clusters} clusters  |  "
+        f"Active Prototypes: {n_clusters}  |  "
         f"Avg Score (cosine): {sil_avg:.3f}",
         fontsize=14, fontweight="bold", pad=16,
     )
     ax.grid(axis="x", linestyle=":", alpha=0.5)
+    sns.despine(ax=ax, left=True)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -323,10 +328,19 @@ def main():
     # 3. Load model ────────────────────────────────────────────────────────────
     model = load_model(args.checkpoint)
 
-    # 4. Extract embeddings + cluster assignments ──────────────────────────────
-    embeddings, labels, cluster_ids = extract_embeddings(model, dataset, args.num_samples)
+    # 4. Extract embeddings ────────────────────────────────────────────────────
+    embeddings, labels = extract_embeddings(model, dataset, args.num_samples)
 
-    # 5. Draw Silhouette Plot ──────────────────────────────────────────────────
+    # 5. Convert clinical labels → numeric cluster IDs ─────────────────────────
+    # This measures: "Does the embedding space separate clinical conditions?"
+    unique_labels = sorted(set(labels))
+    label_to_id   = {l: i for i, l in enumerate(unique_labels)}
+    cluster_ids   = np.array([label_to_id[l] for l in labels])
+    print(f"[*] Using {len(unique_labels)} clinical groups as clusters:")
+    for l, i in label_to_id.items():
+        print(f"    [{i}] {l}: {(cluster_ids == i).sum()} samples")
+
+    # 6. Draw Silhouette Plot ──────────────────────────────────────────────────
     save_path = os.path.join(args.out_dir, "silhouette_plot.png")
     plot_silhouette(embeddings, cluster_ids, labels, save_path)
 
