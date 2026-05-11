@@ -15,7 +15,9 @@ import seaborn as sns
 from torch.utils.data import DataLoader
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+from sklearn.metrics import silhouette_samples, silhouette_score
 import umap
+from collections import Counter
 from tqdm import tqdm
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -240,6 +242,57 @@ def plot_dimensionality_reduction(features, labels, label_names,
     plt.close()
 
 
+def plot_silhouette(features, labels, label_names, title, filename):
+    print(f"[+] Generating Silhouette Plot: {filename}...")
+    
+    conditions = get_primary_labels(labels, label_names)
+    unique_labels = sorted(set(conditions))
+    
+    label_to_idx = {l: i for i, l in enumerate(unique_labels)}
+    y = np.array([label_to_idx[l] for l in conditions])
+    
+    counts = Counter(conditions)
+    valid_indices = [i for i, label in enumerate(conditions) if counts[label] > 1]
+    
+    if not valid_indices:
+        print("[!] Warning: Not enough samples per cluster for Silhouette analysis.")
+        return
+        
+    X = features[valid_indices]
+    y = y[valid_indices]
+    y_labels = [conditions[i] for i in valid_indices]
+    
+    avg_score = silhouette_score(X, y)
+    sample_values = silhouette_samples(X, y)
+    
+    plt.figure(figsize=(12, 10))
+    y_lower = 10
+    colors = sns.color_palette(COLOR_PALETTE, len(unique_labels))
+    
+    for i, label in enumerate(unique_labels):
+        ith_cluster_values = sample_values[np.array(y_labels) == label]
+        ith_cluster_values.sort()
+        
+        size_cluster_i = ith_cluster_values.shape[0]
+        y_upper = y_lower + size_cluster_i
+        
+        color = colors[i]
+        plt.fill_betweenx(np.arange(y_lower, y_upper), 0, ith_cluster_values,
+                          facecolor=color, edgecolor=color, alpha=0.7)
+        
+        plt.text(-0.05, y_lower + 0.5 * size_cluster_i, label)
+        y_lower = y_upper + 10
+        
+    plt.axvline(x=avg_score, color="red", linestyle="--", label=f"Avg Score: {avg_score:.3f}")
+    plt.title(f"{title}\nAverage Silhouette Score: {avg_score:.3f}", fontsize=15, fontweight='bold')
+    plt.xlabel("Silhouette Coefficient Values")
+    plt.ylabel("Cluster Label")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 import argparse
@@ -401,6 +454,11 @@ def main():
                                   method='umap', dims=3,
                                   title="UMAP Visualization (3D) - Image Latent Space",
                                   filename=os.path.join(out, "umap_img_3d.png"))
+
+    # Silhouette Plot
+    plot_silhouette(img_embs, labels, label_names,
+                    "Silhouette Analysis - Image Latent Space",
+                    os.path.join(out, "silhouette_img.png"))
 
     print(f"\n[✔] All plots saved to: {out}")
 
