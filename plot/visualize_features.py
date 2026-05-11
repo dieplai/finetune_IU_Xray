@@ -220,7 +220,7 @@ def main():
             return
 
     # Add pathology labels: Check if they exist, if not, try to extract from 'Problems'/'MeSH'
-    label_names = tp.CHEXPERT_COLS
+    label_names = tp.PATH_COLS
     missing_labels = [col for col in label_names if col not in df.columns]
     
     if missing_labels:
@@ -278,7 +278,7 @@ def main():
     
     # 3. Extract Features
     img_embs, txt_embs, labels = get_features(model, loader)
-    label_names = tp.CHEXPERT_COLS
+    label_names = tp.PATH_COLS
     
     # 4. Generate Visualizations
     print("\n" + "="*30)
