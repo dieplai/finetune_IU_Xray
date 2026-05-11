@@ -1,0 +1,229 @@
+import os
+import torch
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from torch.utils.data import DataLoader
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import umap
+from tqdm import tqdm
+from mpl_toolkits.mplot3d import Axes3D
+
+# Import model and dataset from the training script
+import train_proposed as tp
+from src.dataset import get_val_transform
+
+# Constants
+CHECKPOINT_PATH = "plot/best_clinical_valid.pt"
+OUTPUT_DIR = "plot"
+BATCH_SIZE = 16
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Professional Plot Styling
+plt.style.use('seaborn-v0_8-whitegrid')
+sns.set_theme(style="whitegrid", palette="muted")
+COLOR_PALETTE = "Spectral" # Vibrant and professional
+
+def load_model(checkpoint_path):
+    print(f"[*] Loading model from {checkpoint_path}...")
+    model = tp.StudyMedicalSwinBERT().to(DEVICE)
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+    model.load_state_dict(checkpoint['model'])
+    model.eval()
+    return model
+
+def get_features(model, loader):
+    print("[*] Extracting embeddings from dataset...")
+    all_img_embs = []
+    all_txt_embs = []
+    all_labels = []
+    
+    # We need the tokenizer to process captions
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(tp.TEXT_MODEL)
+    
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Feature Extraction"):
+            images = batch["images"].to(DEVICE)
+            view_mask = batch["view_mask"].to(DEVICE)
+            view_type_ids = batch["view_type_ids"].to(DEVICE)
+            
+            tok = tokenizer(
+                batch["caption"],
+                padding="max_length",
+                truncation=True,
+                max_length=tp.TEXT_MAX_LEN,
+                return_tensors="pt",
+            ).to(DEVICE)
+            
+            img_emb, txt_emb, _, _, _, _, _, _, _ = model(
+                images,
+                view_mask,
+                view_type_ids,
+                tok["input_ids"],
+                tok["attention_mask"],
+            )
+            
+            all_img_embs.append(img_emb.cpu().numpy())
+            all_txt_embs.append(txt_emb.cpu().numpy())
+            all_labels.append(batch["labels"].cpu().numpy())
+            
+    return (
+        np.concatenate(all_img_embs),
+        np.concatenate(all_txt_embs),
+        np.concatenate(all_labels)
+    )
+
+def get_primary_labels(labels, label_names):
+    primary_labels = []
+    for row in labels:
+        pos = np.where(row > 0.5)[0]
+        if len(pos) > 0:
+            primary_labels.append(label_names[pos[0]])
+        else:
+            primary_labels.append("Normal")
+    return primary_labels
+
+def plot_pca_biplot(features, labels, label_names, title, filename):
+    print(f"[+] Generating PCA Biplot: {filename}...")
+    pca = PCA(n_components=2)
+    pca_feat = pca.fit_transform(features)
+    var_exp = pca.explained_variance_ratio_
+    
+    df = pd.DataFrame({
+        'PC1': pca_feat[:, 0],
+        'PC2': pca_feat[:, 1],
+        'Condition': get_primary_labels(labels, label_names)
+    })
+    
+    plt.figure(figsize=(12, 9))
+    scatter = sns.scatterplot(
+        data=df, x='PC1', y='PC2', hue='Condition', 
+        palette=COLOR_PALETTE, alpha=0.8, edgecolor='w', s=60
+    )
+    
+    plt.title(f"{title}\nVariance Explained: PC1={var_exp[0]:.2%}, PC2={var_exp[1]:.2%}", 
+              fontsize=15, fontweight='bold', pad=20)
+    plt.xlabel(f"Principal Component 1 ({var_exp[0]:.2%})", fontsize=12)
+    plt.ylabel(f"Principal Component 2 ({var_exp[1]:.2%})", fontsize=12)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Clinical Condition")
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, filename), dpi=300)
+    plt.close()
+
+def plot_dimensionality_reduction(features, labels, label_names, method='tsne', dims=2, title="", filename=""):
+    print(f"[+] Generating {method.upper()} ({dims}D): {filename}...")
+    
+    if method == 'tsne':
+        reducer = TSNE(n_components=dims, random_state=42, perplexity=30, init='pca', learning_rate='auto')
+    else:
+        reducer = umap.UMAP(n_components=dims, n_neighbors=15, min_dist=0.1, random_state=42)
+        
+    feat_reduced = reducer.fit_transform(features)
+    conditions = get_primary_labels(labels, label_names)
+    
+    if dims == 2:
+        df = pd.DataFrame({
+            'Dim 1': feat_reduced[:, 0],
+            'Dim 2': feat_reduced[:, 1],
+            'Condition': conditions
+        })
+        plt.figure(figsize=(12, 9))
+        sns.scatterplot(
+            data=df, x='Dim 1', y='Dim 2', hue='Condition', 
+            palette=COLOR_PALETTE, alpha=0.8, s=60, edgecolor='w'
+        )
+        plt.title(title, fontsize=15, fontweight='bold', pad=20)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Clinical Condition")
+    else:
+        fig = plt.figure(figsize=(12, 9))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        unique_labels = sorted(list(set(conditions)))
+        colors = sns.color_palette(COLOR_PALETTE, len(unique_labels))
+        label_to_color = dict(zip(unique_labels, colors))
+        
+        for label in unique_labels:
+            mask = np.array(conditions) == label
+            ax.scatter(
+                feat_reduced[mask, 0], feat_reduced[mask, 1], feat_reduced[mask, 2],
+                label=label, alpha=0.7, s=40, edgecolors='w', linewidth=0.5
+            )
+            
+        ax.set_title(title, fontsize=15, fontweight='bold')
+        ax.set_xlabel('Component 1')
+        ax.set_ylabel('Component 2')
+        ax.set_zlabel('Component 3')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Clinical Condition")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, filename), dpi=300)
+    plt.close()
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # 1. Setup Data
+    print("[*] Preparing dataset and dataloader...")
+    if not os.path.exists(tp.CSV_PATH):
+        print(f"[!] Error: CSV file not found at {tp.CSV_PATH}")
+        print("Please ensure the dataset is placed correctly in the 'data/' folder.")
+        return
+
+    df = pd.read_csv(tp.CSV_PATH)
+    transform = get_val_transform(tp.IMG_SIZE)
+    
+    # Use StudyIUXrayDataset from train_proposed to group by study
+    dataset = tp.StudyIUXrayDataset(
+        df=df, 
+        img_dir=tp.IMG_DIR,
+        transform=transform,
+        train_mode=False
+    )
+    
+    # Take a representative subset for visualization (e.g., 800 samples)
+    num_samples = min(len(dataset), 800)
+    indices = np.random.choice(len(dataset), num_samples, replace=False)
+    subset_dataset = torch.utils.data.Subset(dataset, indices)
+        
+    loader = DataLoader(subset_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=tp.collate_study)
+    
+    # 2. Load Model
+    if not os.path.exists(CHECKPOINT_PATH):
+        print(f"[!] Error: Checkpoint not found at {CHECKPOINT_PATH}")
+        return
+        
+    model = load_model(CHECKPOINT_PATH)
+    
+    # 3. Extract Features
+    img_embs, txt_embs, labels = get_features(model, loader)
+    label_names = tp.CHEXPERT_COLS
+    
+    # 4. Generate Visualizations
+    print("\n" + "="*30)
+    print("  GENERATING VISUALIZATIONS")
+    print("="*30)
+    
+    # PCA
+    plot_pca_biplot(img_embs, labels, label_names, "PCA Analysis - Image Embeddings", "pca_img_2d.png")
+    plot_pca_biplot(txt_embs, labels, label_names, "PCA Analysis - Text Embeddings", "pca_txt_2d.png")
+    
+    # t-SNE (2D & 3D)
+    plot_dimensionality_reduction(img_embs, labels, label_names, method='tsne', dims=2, 
+                                  title="t-SNE Visualization (2D) - Image Latent Space", filename="tsne_img_2d.png")
+    plot_dimensionality_reduction(img_embs, labels, label_names, method='tsne', dims=3, 
+                                  title="t-SNE Visualization (3D) - Image Latent Space", filename="tsne_img_3d.png")
+    
+    # UMAP (2D & 3D)
+    plot_dimensionality_reduction(img_embs, labels, label_names, method='umap', dims=2, 
+                                  title="UMAP Visualization (2D) - Image Latent Space", filename="umap_img_2d.png")
+    plot_dimensionality_reduction(img_embs, labels, label_names, method='umap', dims=3, 
+                                  title="UMAP Visualization (3D) - Image Latent Space", filename="umap_img_3d.png")
+    
+    print("\n[✔] Success! All plots saved to the 'plot/' directory.")
+
+if __name__ == "__main__":
+    main()
