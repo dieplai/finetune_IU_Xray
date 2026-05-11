@@ -1,4 +1,14 @@
+import sys
 import os
+
+# Ensure the root directory is in sys.path so we can import train_proposed and src
+if os.getcwd() not in sys.path:
+    sys.path.insert(0, os.getcwd())
+# Also check if we are running from inside the 'plot' folder
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 import torch
 import numpy as np
 import pandas as pd
