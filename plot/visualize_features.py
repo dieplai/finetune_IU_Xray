@@ -32,53 +32,34 @@ plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_theme(style="whitegrid", palette="muted")
 COLOR_PALETTE = "Spectral"
 
-# ─── Target labels (must match tp.PATH_COLS order) ────────────────────────────
-PATH_COLS = [
-    'No Finding', 'Normal', 'Fracture', 'Atelectasis', 'Cardiomegaly',
-    'Pneumonia', 'Consolidation', 'Pleural Effusion', 'Pneumothorax', 'Edema',
-]
+# ─── Target labels (Inherited from training config) ────────────────────────────
+PATH_COLS = tp.PATH_COLS
 
-# ─── Comprehensive MeSH → label mapping ───────────────────────────────────────
-# Keys are lowercase substrings matched against the combined MeSH;Problems string.
-MESH_KEYWORDS = {
-    'No Finding':       ['no indexing'],
-    'Normal':           ['normal'],
-    'Fracture':         ['fracture', 'fractures, bone'],
-    'Atelectasis':      ['atelectasis', 'pulmonary atelectasis'],
-    'Cardiomegaly':     ['cardiomegaly', 'cardiac shadow/enlarged', 'cardiac shadow/borderline'],
-    'Pneumonia':        ['pneumonia', 'airspace disease', 'pulmonary disease'],
-    'Consolidation':    ['consolidation', 'opacity/pulmonary alveoli', 'opacity/lung'],
-    'Pleural Effusion': ['pleural effusion', 'costophrenic angle'],
-    'Pneumothorax':     ['pneumothorax', 'lung, hyperlucent'],
-    'Edema':            ['edema', 'pulmonary congestion', 'pulmonary fibrosis/interstitial'],
-}
-
+# ─── Dynamic Keyword mapping ──────────────────────────────────────────────────
+def get_keywords_for_col(col_name):
+    """Dynamically generate keywords based on column name."""
+    col_lower = col_name.lower()
+    if col_lower == "no finding": return ['no indexing', 'normal', 'negative']
+    if col_lower == "pleural effusion": return ['effusion']
+    if col_lower == "enlarged cardiomediastinum": return ['mediastinum/enlarged']
+    # Default: use the column name itself as the keyword
+    return [col_lower]
 
 def extract_labels_from_mesh(mesh_str: str, problems_str: str) -> np.ndarray:
-    """
-    Parse the free-text MeSH and Problems columns into a binary label vector.
-
-    Strategy
-    --------
-    1. Combine both columns into a single lower-case string.
-    2. For each target label check if any of its MeSH keywords appear.
-    3. If nothing matched, fall back to 'No Finding' = 1.
-
-    Returns
-    -------
-    np.ndarray of shape (len(PATH_COLS),) with 0.0 / 1.0 values.
-    """
     combined = (str(mesh_str) + ';' + str(problems_str)).lower()
     vec = np.zeros(len(PATH_COLS), dtype=np.float32)
 
     for i, col in enumerate(PATH_COLS):
-        keywords = MESH_KEYWORDS.get(col, [])
+        keywords = get_keywords_for_col(col)
         if any(kw in combined for kw in keywords):
             vec[i] = 1.0
 
-    # Nothing matched → label as No Finding
     if vec.sum() == 0:
-        vec[PATH_COLS.index('No Finding')] = 1.0
+        # Fallback to 'No Finding' if it exists in PATH_COLS
+        if 'No Finding' in PATH_COLS:
+            vec[PATH_COLS.index('No Finding')] = 1.0
+        elif 'Normal' in PATH_COLS:
+            vec[PATH_COLS.index('Normal')] = 1.0
 
     return vec
 
