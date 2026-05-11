@@ -105,7 +105,7 @@ def extract_features(model, loader):
             view_type_ids = batch["view_type_ids"].to(DEVICE)
             tok = tokenizer(batch["caption"], padding="max_length", truncation=True,
                             max_length=tp.TEXT_MAX_LEN, return_tensors="pt").to(DEVICE)
-            img_emb, txt_emb, _ = model(images, view_mask, view_type_ids,
+            img_emb, txt_emb, *_ = model(images, view_mask, view_type_ids,
                                         tok["input_ids"], tok["attention_mask"])
             img_embs.append(img_emb.cpu().numpy())
             txt_embs.append(txt_emb.cpu().numpy())
