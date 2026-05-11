@@ -219,11 +219,34 @@ def main():
             print(f"[!] Error: Required columns not found. Available columns: {list(df.columns)}")
             return
 
-    # Add dummy pathology columns if missing to prevent crash
+    # Add pathology labels: Check if they exist, if not, try to extract from 'Problems'/'MeSH'
     label_names = tp.CHEXPERT_COLS
-    for col in label_names:
-        if col not in df.columns:
-            df[col] = 0 # Default to 0 if label not present
+    missing_labels = [col for col in label_names if col not in df.columns]
+    
+    if missing_labels:
+        print(f"[*] Extracting clinical labels from 'Problems' and 'MeSH' columns...")
+        for col in label_names:
+            if col not in df.columns:
+                df[col] = 0.0 # Default
+        
+        # Simple keyword matching for common pathologies
+        keywords = {
+            "Cardiomegaly": ["cardiomegaly", "enlarged heart"],
+            "Pleural Effusion": ["effusion", "pleural effusion"],
+            "Edema": ["edema", "pulmonary edema"],
+            "Pneumonia": ["pneumonia", "infection"],
+            "Atelectasis": ["atelectasis", "collapse"],
+            "Pneumothorax": ["pneumothorax", "collapsed lung"],
+            "Consolidation": ["consolidation"],
+            "Fracture": ["fracture", "broken"],
+            "No Finding": ["normal", "no finding", "negative"]
+        }
+        
+        for idx, row in df.iterrows():
+            text = (str(row.get('Problems', '')) + " " + str(row.get('MeSH', ''))).lower()
+            for col, keys in keywords.items():
+                if any(k in text for k in keys) and col in df.columns:
+                    df.at[idx, col] = 1.0
 
     print(f"[*] Visualizing with fixed image size: 384x384")
     from torchvision import transforms as T
