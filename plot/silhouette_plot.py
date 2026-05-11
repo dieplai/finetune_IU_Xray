@@ -38,6 +38,8 @@ import matplotlib.cm as cm
 import seaborn as sns
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset, Subset
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import normalize
 from sklearn.metrics import silhouette_score, silhouette_samples
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -185,9 +187,20 @@ def plot_silhouette(embeddings, cluster_ids, condition_labels, save_path: str):
 
     print(f"[*] Computing silhouette scores for {len(embeddings)} samples, "
           f"{n_clusters} clusters ...")
-    sil_vals   = silhouette_samples(embeddings, cluster_ids)
-    sil_avg    = silhouette_score(embeddings, cluster_ids)
-    print(f"[*] Average Silhouette Score: {sil_avg:.4f}")
+    
+    # Normalize embeddings to unit sphere → cosine distance = Euclidean distance on unit sphere
+    # This is the correct metric for contrastive learning embeddings
+    emb_norm = normalize(embeddings, norm='l2')
+    
+    # Optional: reduce to 64 dims with PCA to reduce noise in high-dim space
+    if emb_norm.shape[1] > 64:
+        print(f"[*] Reducing from {emb_norm.shape[1]} → 64 dims with PCA ...")
+        pca = PCA(n_components=64, random_state=42)
+        emb_norm = pca.fit_transform(emb_norm)
+    
+    sil_vals   = silhouette_samples(emb_norm, cluster_ids, metric='cosine')
+    sil_avg    = silhouette_score(emb_norm, cluster_ids, metric='cosine')
+    print(f"[*] Average Silhouette Score (cosine): {sil_avg:.4f}")
 
     fig, ax = plt.subplots(figsize=(12, max(8, n_clusters * 1.2)))
     y_lower = 10
@@ -238,7 +251,7 @@ def plot_silhouette(embeddings, cluster_ids, condition_labels, save_path: str):
     ax.set_title(
         f"Silhouette Analysis — Image Latent Space\n"
         f"Model Prototypes: {n_clusters} clusters  |  "
-        f"Avg Score: {sil_avg:.3f}",
+        f"Avg Score (cosine): {sil_avg:.3f}",
         fontsize=14, fontweight="bold", pad=16,
     )
     ax.grid(axis="x", linestyle=":", alpha=0.5)
