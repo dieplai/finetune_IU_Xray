@@ -195,6 +195,20 @@ def main():
         return
 
     df = pd.read_csv(args.csv_path)
+    
+    # Preprocessing for Kaggle datasets that might lack 'patient_id'
+    if 'patient_id' not in df.columns:
+        if 'image_id' in df.columns:
+            print("[*] 'patient_id' column missing. Attempting to parse from 'image_id'...")
+            df['patient_id'] = df['image_id'].apply(lambda x: str(x).split('_')[0])
+        else:
+            print("[!] Error: Neither 'patient_id' nor 'image_id' found in CSV.")
+            return
+
+    # Ensure other required columns exist or have fallbacks
+    if 'org_caption' not in df.columns and 'caption' in df.columns:
+        df['org_caption'] = df['caption']
+
     transform = get_val_transform(tp.IMG_SIZE)
     
     dataset = tp.StudyIUXrayDataset(
