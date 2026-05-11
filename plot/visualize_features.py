@@ -196,18 +196,34 @@ def main():
 
     df = pd.read_csv(args.csv_path)
     
+    # Mapping common Kaggle column names to expected names
+    column_mapping = {
+        'uid': 'patient_id',
+        'filename': 'image_id',
+        'findings': 'org_caption',
+        'impression': 'org_caption',
+        'report': 'org_caption',
+        'caption': 'org_caption'
+    }
+    for old_col, new_col in column_mapping.items():
+        if old_col in df.columns and new_col not in df.columns:
+            print(f"[*] Mapping column '{old_col}' to '{new_col}'")
+            df[new_col] = df[old_col]
+
     # Preprocessing for Kaggle datasets that might lack 'patient_id'
     if 'patient_id' not in df.columns:
         if 'image_id' in df.columns:
             print("[*] 'patient_id' column missing. Attempting to parse from 'image_id'...")
             df['patient_id'] = df['image_id'].apply(lambda x: str(x).split('_')[0])
         else:
-            print("[!] Error: Neither 'patient_id' nor 'image_id' found in CSV.")
+            print(f"[!] Error: Required columns not found. Available columns: {list(df.columns)}")
             return
 
-    # Ensure other required columns exist or have fallbacks
-    if 'org_caption' not in df.columns and 'caption' in df.columns:
-        df['org_caption'] = df['caption']
+    # Add dummy pathology columns if missing to prevent crash
+    label_names = tp.CHEXPERT_COLS
+    for col in label_names:
+        if col not in df.columns:
+            df[col] = 0 # Default to 0 if label not present
 
     transform = get_val_transform(tp.IMG_SIZE)
     
