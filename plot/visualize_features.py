@@ -377,8 +377,23 @@ def main():
         T.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225])
     ])
     df = pd.read_csv(args.csv_path)
-    # ... (column mapping as in original) ...
-    # I'll skip full remapping; assume df is ready with 'patient_id' etc.
+    
+    # Column mapping to ensure compatibility with Kaggle names
+    column_mapping = {
+        'uid':        'patient_id',
+        'filename':   'image_id',
+        'findings':   'org_caption',
+        'impression': 'org_caption',
+        'report':     'org_caption',
+        'caption':    'org_caption',
+    }
+    for old_col, new_col in column_mapping.items():
+        if old_col in df.columns and new_col not in df.columns:
+            df[new_col] = df[old_col]
+            
+    if 'patient_id' not in df.columns and 'image_id' in df.columns:
+        df['patient_id'] = df['image_id'].apply(lambda x: str(x).split('_')[0])
+
     # Use your original dataset class
     dataset = tp.StudyIUXrayDataset(df, args.img_dir, transform, train_mode=False)
     indices = np.random.choice(len(dataset), min(args.num_samples, len(dataset)), replace=False)
