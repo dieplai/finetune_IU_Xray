@@ -43,6 +43,8 @@ from sklearn.preprocessing import normalize
 from sklearn.metrics import silhouette_score, silhouette_samples
 from tqdm import tqdm
 from transformers import AutoTokenizer
+from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.spatial.distance import pdist
 
 import train_proposed as tp
 
@@ -261,6 +263,73 @@ def plot_silhouette(embeddings, cluster_ids, condition_labels, save_path: str):
     print(f"[✔] Silhouette plot saved → {save_path}")
 
 
+def plot_hierarchical_clusters(embeddings, labels, save_path: str):
+    """
+    Perform Hierarchical Clustering on class centroids and plot a Dendrogram.
+    Shows how the model relates different pathologies to each other.
+    """
+    print(f"[*] Performing Hierarchical Clustering analysis ...")
+    
+    unique_labels = sorted(set(labels))
+    centroids = []
+    for l in unique_labels:
+        mask = np.array([lbl == l for lbl in labels])
+        centroids.append(embeddings[mask].mean(axis=0))
+    
+    centroids = np.array(centroids)
+    centroids = normalize(centroids, norm='l2') # Normalize for cosine similarity
+    
+    # Compute linkage matrix using 'ward' or 'average' method with cosine distance
+    # Note: 'ward' usually needs Euclidean, so we use normalized vectors + ward
+    linked = linkage(centroids, method='ward')
+    
+    plt.figure(figsize=(10, 7))
+    dendrogram(linked,
+               orientation='top',
+               labels=unique_labels,
+               distance_sort='descending',
+               show_leaf_counts=True,
+               leaf_font_size=10)
+    
+    plt.title("Hierarchical Clustering of Clinical Pathologies\n(Latent Space Relationship Tree)", 
+              fontsize=14, fontweight='bold', pad=20)
+    plt.ylabel("Distance (Similarity)", fontsize=12)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[✔] Hierarchical Dendrogram saved → {save_path}")
+
+
+def plot_similarity_clustermap(embeddings, labels, save_path: str):
+    """
+    Generate a Heatmap + Dendrogram (Clustermap) of group-to-group similarity.
+    """
+    unique_labels = sorted(set(labels))
+    centroids = []
+    for l in unique_labels:
+        mask = np.array([lbl == l for lbl in labels])
+        centroids.append(embeddings[mask].mean(axis=0))
+    
+    centroids = np.array(centroids)
+    centroids = normalize(centroids, norm='l2')
+    
+    # Compute Cosine Similarity Matrix
+    sim_matrix = np.dot(centroids, centroids.T)
+    sim_df = pd.DataFrame(sim_matrix, index=unique_labels, columns=unique_labels)
+    
+    g = sns.clustermap(sim_df, annot=True, cmap="YlGnBu", figsize=(10, 10),
+                       cbar_pos=(0.02, 0.8, 0.05, 0.18))
+    
+    plt.setp(g.ax_heatmap.get_xticklabels(), rotation=45)
+    g.fig.suptitle("Clinical Similarity Clustermap\n(Hierarchical Relationship)", 
+                   fontsize=15, fontweight='bold', y=1.02)
+    
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[✔] Similarity Clustermap saved → {save_path}")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser()
@@ -352,6 +421,13 @@ def main():
     # 7. Draw Silhouette Plot ──────────────────────────────────────────────────
     save_path = os.path.join(args.out_dir, "silhouette_plot.png")
     plot_silhouette(embeddings, cluster_ids, labels, save_path)
+
+    # 8. Hierarchical Visualizations ───────────────────────────────────────────
+    dendro_path = os.path.join(args.out_dir, "hierarchical_dendrogram.png")
+    plot_hierarchical_clusters(embeddings, labels, dendro_path)
+    
+    heatmap_path = os.path.join(args.out_dir, "similarity_clustermap.png")
+    plot_similarity_clustermap(embeddings, labels, heatmap_path)
 
 
 if __name__ == "__main__":
