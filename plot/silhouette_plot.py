@@ -1,6 +1,6 @@
 """
-silhouette_plot.py
-==================
+silhouette_plot.py  (FIXED VERSION)
+=====================================
 Standalone script to generate a Silhouette Plot for the IU X-ray model.
 
 Input:
@@ -21,13 +21,21 @@ Usage (on Kaggle):
       --img_dir /kaggle/input/chest-xrays-indiana-university/images/images_normalized \
       --out_dir /kaggle/working/plots \
       --num_samples 800 \
-      --min_per_class 15
+      --min_per_class 40
 
-Fixes applied:
-  1. model output unpacked explicitly with .detach() before .numpy()
-  2. tokenizer moved inside collate_fn (closure captured correctly)
-  3. pathology_mask uses np.isin + consistent lowercase, no stale list
-  4. stratified sampling ensures every class has >= min_per_class samples
+FIXES APPLIED (v2):
+  FIX-1  model output unpacked explicitly with .detach() before .numpy()
+  FIX-2  tokenizer moved inside collate_fn (closure captured correctly)
+  FIX-3  pathology_mask uses np.isin + consistent lowercase, no stale list
+  FIX-4  stratified sampling ensures every class has >= min_per_class samples
+  FIX-5  MESH_KEYWORDS greatly expanded — catches emphysema, granuloma,
+         nodule, scoliosis, degenerative, thickening/pleura, hernia, etc.
+         (was silently dumping ~700 real pathology rows into "No Finding")
+  FIX-6  Dataset built from pathology-only rows BEFORE sampling — avoids
+         wasting the num_samples budget on normals that get discarded later
+  FIX-7  MeSH uses full-path matching (e.g. "cardiac shadow" catches both
+         "cardiac shadow/enlarged" and "cardiac shadow/borderline" without
+         needing separate entries)
 """
 
 import sys, os, argparse, warnings
@@ -59,35 +67,138 @@ from scipy.spatial.distance import pdist
 import train_proposed as tp
 
 # ── constants ────────────────────────────────────────────────────────────────
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-IMG_SIZE = 384
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+IMG_SIZE   = 384
 BATCH_SIZE = 16
 
-# ── label extraction from MeSH / Problems ────────────────────────────────────
+# ── FIX-5: expanded keyword dictionary ──────────────────────────────────────
+# Strategy: match MeSH "Term/location/qualifier" paths using prefix substrings.
+# E.g. "cardiac shadow" matches both "cardiac shadow/enlarged" and
+# "cardiac shadow/borderline" — no need to list every variant separately.
 MESH_KEYWORDS = {
-    "No Finding":            ["normal", "no indexing", "negative"],
-    "Heart/Mediastinum":     ["cardiomegaly", "cardiac shadow/enlarged",
-                              "cardiac shadow/borderline", "mediastinum/enlarged"],
-    "Lung/Parenchyma":       ["pneumonia", "airspace disease", "consolidation",
-                              "atelectasis", "pulmonary atelectasis", "edema",
-                              "pulmonary congestion", "pulmonary edema",
-                              "opacity", "shadow", "interstitial"],
-    "Pleural/Space":         ["pleural effusion", "effusion", "costophrenic",
-                              "pneumothorax"],
-    "Bone/Fracture":         ["fracture", "fractures"],
+    # ── NOTE: "No Finding" is checked LAST (fallback) ──────────────────────
+    "No Finding": [
+        "normal",
+        "no indexing",
+        "negative",
+    ],
+
+    # ── Cardiac / Mediastinal ───────────────────────────────────────────────
+    "Heart/Mediastinum": [
+        "cardiomegaly",
+        "cardiac shadow",            # covers /enlarged and /borderline
+        "mediastinum/enlarged",
+        "mediastinum/widened",
+        "aorta/tortuous",
+        "aorta, thoracic/tortuous",
+        "pericardial effusion",
+        "pericardium",
+        "hilar",
+        "pulmonary artery/enlarged",
+        "pulmonary hypertension",
+        "vascular",
+        "venous congestion",
+        "stents/coronary",           # post-surgical cardiac marker
+    ],
+
+    # ── Lung Parenchyma / Airspace ──────────────────────────────────────────
+    "Lung/Parenchyma": [
+        # original
+        "pneumonia",
+        "airspace disease",
+        "consolidation",
+        "atelectasis",
+        "pulmonary atelectasis",
+        "edema",
+        "pulmonary congestion",
+        "pulmonary edema",
+        "opacity",
+        "shadow",
+        "interstitial",
+        # FIX-5 additions
+        "emphysema",
+        "bullous emphysema",
+        "fibrosis",
+        "pulmonary fibrosis",
+        "granuloma",                 # Calcified Granuloma/lung → 395 cases
+        "granulomatous disease",
+        "nodule",
+        "mass/lung",
+        "lung/hyperdistention",      # COPD / hyperinflation
+        "lung/hypoinflation",
+        "diaphragm/flattened",       # sign of hyperinflation
+        "cicatrix/lung",             # scarring
+        "density/lung",
+        "density/cardiophrenic",
+        "infiltrate",
+        "aspiration",
+        "abscess",
+        "cavitation",
+        "hernia/diaphragmatic",
+        "diaphragm/elevated",        # sub-phrenic / phrenic palsy
+    ],
+
+    # ── Pleural / Chest Wall ────────────────────────────────────────────────
+    "Pleural/Space": [
+        # original
+        "pleural effusion",
+        "effusion",
+        "costophrenic",
+        "pneumothorax",
+        # FIX-5 additions
+        "thickening/pleura",         # pleural thickening — 46+ cases missed
+        "pleural thickening",
+        "hydropneumothorax",
+        "empyema",
+        "mesothelioma",
+    ],
+
+    # ── Bone / Musculoskeletal ──────────────────────────────────────────────
+    "Bone/Fracture": [
+        # original
+        "fracture",
+        "fractures",
+        # FIX-5 additions — spine & rib pathology
+        "scoliosis",                 # 88 cases, 63 were missed
+        "kyphosis",                  # 28 cases
+        "osteophyte",                # degenerative spine — very common
+        "spondylosis",               # 25+ cases
+        "degenerative",              # covers thoracic vertebrae/degenerative
+        "deformity/ribs",
+        "deformity/thoracic",
+        "deformity/spine",
+        "compression fracture",
+        "lytic",
+        "sclerotic",
+        "bone and bones/thorax",
+        "osteoporosis",
+        "osteopenia",
+        "rib/",                      # rib lesions (rib/fracture, rib/lesion …)
+    ],
 }
+
 LABEL_NAMES = list(MESH_KEYWORDS.keys())
 
-# Labels treated as "normal" — removed before silhouette analysis
-NORMAL_LABELS = {"no finding", "normal"}
+# Labels treated as "normal" — excluded before silhouette analysis
+NORMAL_LABELS = {"no finding"}
 
 
 def assign_label(mesh: str, problems: str) -> str:
-    """Return the primary clinical label for one row (lowercase for consistency)."""
+    """
+    Return the primary clinical label for one row.
+
+    FIX-7: checks pathology categories first (priority order), then falls
+    back to "No Finding". Uses lowercase substring matching so that
+    MeSH hierarchical paths like "Pulmonary Atelectasis/base/bilateral"
+    are caught by the keyword "atelectasis".
+    """
     combined = (str(mesh) + " " + str(problems)).lower()
-    for label in LABEL_NAMES[1:]:          # skip "No Finding", check pathologies first
+
+    # Check pathologies in priority order (skip index 0 = "No Finding")
+    for label in LABEL_NAMES[1:]:
         if any(kw in combined for kw in MESH_KEYWORDS[label]):
             return label
+
     return "No Finding"
 
 
@@ -96,8 +207,8 @@ class FrontalDataset(Dataset):
     """Loads one Frontal image per study (uid) with its caption."""
 
     def __init__(self, df: pd.DataFrame, img_dir: str, transform):
-        self.records  = df.reset_index(drop=True)
-        self.img_dir  = img_dir
+        self.records   = df.reset_index(drop=True)
+        self.img_dir   = img_dir
         self.transform = transform
 
     def __len__(self):
@@ -125,15 +236,19 @@ class FrontalDataset(Dataset):
 def stratified_sample(dataset: Dataset,
                       all_labels: np.ndarray,
                       num_samples: int,
-                      min_per_class: int = 15) -> Subset:
+                      min_per_class: int = 40) -> Subset:
     """
     Sample indices so that:
       - every class gets at least min_per_class samples (or all available)
       - total samples ≈ num_samples (distributed proportionally after the minimum)
 
-    FIX #4: replaces the plain random choice that could leave rare classes
+    FIX-4: replaces the plain random choice that could leave rare classes
             (e.g. Bone/Fracture) with fewer than 2 samples, crashing
             silhouette_score().
+
+    FIX-6: this function now receives a pathology-only dataset/labels array,
+            so none of the num_samples budget is wasted on "No Finding" rows
+            that would be discarded anyway.
     """
     unique_labels, counts = np.unique(all_labels, return_counts=True)
     n_classes = len(unique_labels)
@@ -172,9 +287,9 @@ def extract_embeddings(model, subset: Subset):
     """
     Extract image embeddings from the model.
 
-    FIX #1: model output is unpacked explicitly; .detach() is called before
+    FIX-1: model output is unpacked explicitly; .detach() is called before
             .cpu().numpy() to avoid RuntimeError when grad is attached.
-    FIX #2: tokenizer is instantiated once and captured inside collate_fn
+    FIX-2: tokenizer is instantiated once and captured inside collate_fn
             as a proper closure — no more tokenizer-out-of-scope risk.
     """
     tokenizer = AutoTokenizer.from_pretrained(tp.TEXT_MODEL)
@@ -203,11 +318,11 @@ def extract_embeddings(model, subset: Subset):
             B = images.size(0)
             images        = images.unsqueeze(1).to(DEVICE)          # (B,1,C,H,W)
             view_mask     = torch.ones (B, 1, dtype=torch.bool,  device=DEVICE)
-            view_type_ids = torch.zeros(B, 1, dtype=torch.long, device=DEVICE)
+            view_type_ids = torch.zeros(B, 1, dtype=torch.long,  device=DEVICE)
 
             tok = {k: v.to(DEVICE) for k, v in tok.items()}
 
-            # FIX #1 — unpack output explicitly; index 0 = img_features
+            # FIX-1 — unpack output explicitly; index 0 = img_features
             outputs  = model(
                 images, view_mask, view_type_ids,
                 tok["input_ids"], tok["attention_mask"],
@@ -402,9 +517,11 @@ def parse_args():
                    help="Directory containing .png images")
     p.add_argument("--out_dir",         default="plots")
     p.add_argument("--num_samples",     type=int, default=800,
-                   help="Total number of images to sample (stratified)")
-    p.add_argument("--min_per_class",   type=int, default=15,
-                   help="Minimum samples guaranteed per class (FIX #4)")
+                   help="Total pathology images to sample (stratified). "
+                        "Normal images are excluded before sampling (FIX-6).")
+    p.add_argument("--min_per_class",   type=int, default=40,
+                   help="Minimum samples guaranteed per pathology class (FIX-4). "
+                        "Raised default from 15→40 to improve silhouette stability.")
     return p.parse_args()
 
 
@@ -429,14 +546,36 @@ def main():
     for col in ["MeSH", "Problems", "findings", "impression"]:
         merged[col] = merged[col].fillna("")
 
+    # FIX-5: assign_label now uses the expanded MESH_KEYWORDS
     merged["label"] = merged.apply(
         lambda r: assign_label(r["MeSH"], r["Problems"]), axis=1
     )
-    print(f"[*] Dataset: {len(merged)} Frontal studies")
-    print("[*] Label distribution:")
+    print(f"[*] Full dataset: {len(merged)} Frontal studies")
+    print("[*] Label distribution (ALL):")
     print(merged["label"].value_counts().to_string())
 
-    # 2. Build dataset ─────────────────────────────────────────────────────────
+    # 2. FIX-6: filter normals BEFORE building dataset & sampling ─────────────
+    # This prevents num_samples budget from being spent on rows that will be
+    # discarded anyway. Previously: sample 800 → discard 540 normals → 260 left.
+    # Now: sample 800 from ~1000 pathology rows → keep all 800.
+    labels_lower    = merged["label"].str.lower()
+    pathology_mask  = ~labels_lower.isin(NORMAL_LABELS)
+    pathology_df    = merged[pathology_mask].reset_index(drop=True)
+    n_normal        = (~pathology_mask).sum()
+    n_patho         = pathology_mask.sum()
+
+    print(f"\n[*] Excluded {n_normal} 'No Finding' studies before sampling.")
+    print(f"[*] Pathology pool: {n_patho} studies")
+    print("[*] Label distribution (PATHOLOGY ONLY):")
+    print(pathology_df["label"].value_counts().to_string())
+
+    if n_patho < 5:
+        raise ValueError(
+            f"Too few pathology samples ({n_patho}). "
+            "Check your CSV or expand MESH_KEYWORDS."
+        )
+
+    # 3. Build dataset from pathology-only rows ────────────────────────────────
     from torchvision import transforms as T
     transform = T.Compose([
         T.Resize((IMG_SIZE, IMG_SIZE), interpolation=T.InterpolationMode.BICUBIC),
@@ -444,11 +583,10 @@ def main():
         T.Normalize(mean=[0.485, 0.456, 0.406],
                     std =[0.229, 0.224, 0.225]),
     ])
-    dataset = FrontalDataset(merged, args.img_dir, transform)
+    dataset = FrontalDataset(pathology_df, args.img_dir, transform)
 
-    # 3. Stratified sampling ───────────────────────────────────────────────────
-    # FIX #4: use stratified_sample() instead of plain np.random.choice
-    all_labels_arr = merged["label"].values
+    # 4. FIX-4 + FIX-6: stratified sample from pathology pool only ────────────
+    all_labels_arr = pathology_df["label"].values
     subset = stratified_sample(
         dataset, all_labels_arr,
         num_samples=args.num_samples,
@@ -456,39 +594,32 @@ def main():
     )
     print(f"[*] Stratified subset size: {len(subset)}")
 
-    # 4. Load model ────────────────────────────────────────────────────────────
+    # 5. Load model ────────────────────────────────────────────────────────────
     model = load_model(args.checkpoint)
 
-    # 5. Extract embeddings ────────────────────────────────────────────────────
-    # FIX #1 & #2 happen inside extract_embeddings()
+    # 6. Extract embeddings (FIX-1 & FIX-2 inside) ────────────────────────────
     embeddings, labels = extract_embeddings(model, subset)
+    labels_np = np.array([str(l).lower() for l in labels])
 
-    # 6. Filter normals — keep only pathology samples ──────────────────────────
-    # FIX #3: use np.isin with consistent lowercase; no stale list variable
-    labels_np        = np.array([str(l).lower() for l in labels])
-    pathology_mask   = ~np.isin(labels_np, list(NORMAL_LABELS))
+    # Sanity check — should be 0 normals since we filtered before sampling
+    n_normal_remaining = np.isin(labels_np, list(NORMAL_LABELS)).sum()
+    if n_normal_remaining > 0:
+        print(f"[!] Warning: {n_normal_remaining} 'normal' samples slipped through — removing.")
+        keep = ~np.isin(labels_np, list(NORMAL_LABELS))   # FIX-3 style
+        embeddings = embeddings[keep]
+        labels_np  = labels_np[keep]
 
-    n_normal = (~pathology_mask).sum()
-    n_patho  = pathology_mask.sum()
-
-    if n_patho < 5:
-        print(f"[!] Too few pathology samples ({n_patho}). Keeping all for analysis.")
-        pathology_mask = np.ones(len(labels_np), dtype=bool)
-    else:
-        print(f"[*] Removed {n_normal} normal samples.")
-        print(f"[*] Pathology samples remaining: {n_patho}")
-
-    embeddings = embeddings[pathology_mask]
-    labels     = labels_np[pathology_mask].tolist()
+    labels = labels_np.tolist()
 
     # 7. Map clinical labels → numeric cluster IDs ─────────────────────────────
     unique_labels = sorted(set(labels))
     label_to_id   = {l: i for i, l in enumerate(unique_labels)}
     cluster_ids   = np.array([label_to_id[l] for l in labels])
 
-    print(f"[*] Final {len(unique_labels)} clinical groups for Silhouette:")
+    print(f"\n[*] Final {len(unique_labels)} clinical groups for Silhouette:")
     for l, i in label_to_id.items():
-        print(f"    Cluster {i}: {l}  (n={(cluster_ids == i).sum()})")
+        n = (cluster_ids == i).sum()
+        print(f"    Cluster {i}: {l}  (n={n})")
 
     # 8. Draw Silhouette Plot ──────────────────────────────────────────────────
     plot_silhouette(
